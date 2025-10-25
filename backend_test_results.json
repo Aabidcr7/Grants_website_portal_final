@@ -1,0 +1,86 @@
+{
+  "total_tests": 13,
+  "passed_tests": 12,
+  "failed_tests": 1,
+  "success_rate": 92.3076923076923,
+  "test_results": [
+    {
+      "test": "API Health Check",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:34.862332"
+    },
+    {
+      "test": "Stats Endpoint",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:34.909779"
+    },
+    {
+      "test": "User Registration",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:35.174180"
+    },
+    {
+      "test": "User Login",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:35.436854"
+    },
+    {
+      "test": "Invalid Login",
+      "success": true,
+      "details": "Status: 401",
+      "timestamp": "2025-10-22T09:20:35.470306"
+    },
+    {
+      "test": "Get User Profile",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:35.507981"
+    },
+    {
+      "test": "Unauthorized Access",
+      "success": false,
+      "details": "Status: 403, Expected: 401, Response: {'detail': 'Not authenticated'}",
+      "timestamp": "2025-10-22T09:20:35.546830"
+    },
+    {
+      "test": "Screening Form Submission",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:54.556447"
+    },
+    {
+      "test": "Get Grant Matches",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:57.615353"
+    },
+    {
+      "test": "Grant Structure Validation",
+      "success": true,
+      "details": "All required fields present",
+      "timestamp": "2025-10-22T09:20:57.616145"
+    },
+    {
+      "test": "All Grants Endpoint",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:57.657235"
+    },
+    {
+      "test": "Valid Coupon Validation",
+      "success": true,
+      "details": "Status: 200",
+      "timestamp": "2025-10-22T09:20:57.695183"
+    },
+    {
+      "test": "Invalid Coupon Validation",
+      "success": true,
+      "details": "Status: 404",
+      "timestamp": "2025-10-22T09:20:57.733808"
+    }
+  ]
+}
