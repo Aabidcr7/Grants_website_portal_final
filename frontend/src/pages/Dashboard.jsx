@@ -11,6 +11,8 @@ import { Award, LogOut, Crown, Sparkles, ExternalLink, Calendar, BadgeCheck, Gif
 import axios from 'axios';
 import { toast } from 'sonner';
 import VentureAnalystDashboard from './VentureAnalystDashboard';
+import AdminDashboard from './AdminDashboard';
+import IncubationAdminDashboard from './IncubationAdminDashboard';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 const API = `${BACKEND_URL}/api`;
@@ -34,8 +36,9 @@ const Dashboard = () => {
     }
 
     const parsedUser = JSON.parse(userData);
-    // Venture analysts don't need to complete screening
-    if (!parsedUser.has_completed_screening && parsedUser.tier !== 'venture_analyst') {
+    // Admin, incubation admin, and venture analysts don't need to complete screening
+    const adminTiers = ['admin', 'incubation_admin', 'venture_analyst'];
+    if (!parsedUser.has_completed_screening && !adminTiers.includes(parsedUser.tier)) {
       navigate('/screening');
       return;
     }
@@ -46,6 +49,12 @@ const Dashboard = () => {
 
   const fetchGrants = async (token, userData = user) => {
     try {
+      // Admin and incubation admin handle their own data, skip grant fetching
+      if (userData?.tier === 'admin' || userData?.tier === 'incubation_admin') {
+        setLoading(false);
+        return;
+      }
+      
       // Venture analysts get all grants, others get matched grants
       const endpoint = userData?.tier === 'venture_analyst' ? '/grants/all' : '/grants/matches';
       const response = await axios.get(`${API}${endpoint}`, {
@@ -174,14 +183,18 @@ const Dashboard = () => {
   }
 
   // Render different dashboard based on tier
-  if (user?.tier === 'free') {
+  if (user?.tier === 'admin') {
+    return <AdminDashboard user={user} handleLogout={handleLogout} />;
+  } else if (user?.tier === 'incubation_admin') {
+    return <IncubationAdminDashboard user={user} handleLogout={handleLogout} />;
+  } else if (user?.tier === 'venture_analyst') {
+    return <VentureAnalystDashboard user={user} handleLogout={handleLogout} />;
+  } else if (user?.tier === 'free') {
     return <FreeTierDashboard user={user} grants={filteredGrants} searchTerm={searchTerm} setSearchTerm={setSearchTerm} handleLogout={handleLogout} handleCouponSubmit={handleCouponSubmit} couponCode={couponCode} setCouponCode={setCouponCode} couponLoading={couponLoading} />;
   } else if (user?.tier === 'premium') {
     return <PremiumTierDashboard user={user} grants={filteredGrants} searchTerm={searchTerm} setSearchTerm={setSearchTerm} handleLogout={handleLogout} handleCouponSubmit={handleCouponSubmit} couponCode={couponCode} setCouponCode={setCouponCode} couponLoading={couponLoading} handleDownloadAllPDF={handleDownloadAllPDF} isDownloading={isDownloading} />;
   } else if (user?.tier === 'expert') {
     return <ExpertTierDashboard user={user} grants={filteredGrants} searchTerm={searchTerm} setSearchTerm={setSearchTerm} handleLogout={handleLogout} handleDownloadAllPDF={handleDownloadAllPDF} isDownloading={isDownloading} />;
-  } else if (user?.tier === 'venture_analyst') {
-    return <VentureAnalystDashboard user={user} handleLogout={handleLogout} />;
   }
 
   return null;
@@ -776,7 +789,7 @@ const PremiumTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleL
                   </div>
                   <div className="text-sm">
                     <p className="text-gray-700 font-medium mb-1">Why it matches:</p>
-                    <p className="text-gray-600 text-xs line-clamp-2">{grant.reason}</p>
+                    <p className={`text-gray-600 text-xs ${user?.tier === 'premium' ? '' : 'line-clamp-2'}`}>{grant.reason}</p>
                   </div>
                   <div className="flex items-center text-xs text-gray-500">
                     <Calendar className="w-3 h-3 mr-1" />

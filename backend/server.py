@@ -41,6 +41,7 @@ GRANT_TRACKING_CSV = DATA_DIR / 'grant_tracking.csv'
 # CSV Storage Configuration
 USERS_CSV = DATA_DIR / 'users.csv'
 GRANT_MATCHES_CSV = DATA_DIR / 'grant_matches.csv'
+STARTUP_ASSIGNMENTS_CSV = DATA_DIR / 'startup_assignments.csv'
 
 # OpenAI setup
 openai.api_key = os.environ.get('OPENAI_API_KEY', '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')
@@ -95,6 +96,16 @@ def save_grant_tracking_df(df):
     """Save grant tracking to CSV file"""
     df.to_csv(GRANT_TRACKING_CSV, index=False)
 
+def load_startup_assignments_df():
+    """Load startup assignments from CSV file"""
+    if STARTUP_ASSIGNMENTS_CSV.exists():
+        return pd.read_csv(STARTUP_ASSIGNMENTS_CSV)
+    return pd.DataFrame(columns=['id', 'startup_id', 'assigned_to_id', 'assigned_to_type', 'assigned_by', 'assigned_at'])
+
+def save_startup_assignments_df(df):
+    """Save startup assignments to CSV file"""
+    df.to_csv(STARTUP_ASSIGNMENTS_CSV, index=False)
+
 def sync_user_tier_to_startup(user_email: str, new_tier: str):
     """Sync user tier from users.csv to startups.csv - ensures both files stay in sync"""
     try:
@@ -131,6 +142,40 @@ def sync_startup_tier_to_user(user_email: str, new_tier: str):
                 print(f"✅ Synced tier '{new_tier}' for {user_email} in users.csv")
     except Exception as e:
         print(f"❌ Error syncing tier to user: {e}")
+
+# Incubation Registration Link Management
+def load_incubation_links_df():
+    """Load incubation registration links from CSV"""
+    try:
+        file_path = ROOT_DIR / "data" / "incubation_links.csv"
+        if file_path.exists():
+            return pd.read_csv(file_path)
+        else:
+            # Create empty dataframe with required columns
+            return pd.DataFrame(columns=[
+                'id', 'incubation_admin_id', 'incubation_admin_name', 'link_code', 
+                'created_at', 'is_active', 'usage_count'
+            ])
+    except Exception as e:
+        print(f"Error loading incubation links: {e}")
+        return pd.DataFrame(columns=[
+            'id', 'incubation_admin_id', 'incubation_admin_name', 'link_code', 
+            'created_at', 'is_active', 'usage_count'
+        ])
+
+def save_incubation_links_df(df):
+    """Save incubation registration links to CSV"""
+    try:
+        file_path = ROOT_DIR / "data" / "incubation_links.csv"
+        df.to_csv(file_path, index=False)
+    except Exception as e:
+        print(f"Error saving incubation links: {e}")
+
+def generate_link_code():
+    """Generate a unique 8-character link code"""
+    import secrets
+    import string
+    return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
 
 # Create the main app
 app = FastAPI()
@@ -198,11 +243,15 @@ class GrantScreeningCombined(BaseModel):
     founder_name: str
     entity_type: str
     location: str
+    year_of_incorporation: int
     industry: str
+    industry_other: Optional[str] = None
     company_size: int
     description: str
     contact_email: EmailStr
     contact_phone: str
+    ownership_type: List[str]  # Multi-select field
+    funding_need: float
     # Page 2 fields
     stage: str
     revenue: float
@@ -254,7 +303,59 @@ class GrantTrackingUpdate(BaseModel):
     screenshot_path: Optional[str] = None
     notes: Optional[str] = None
 
+class VentureAnalystProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    photo_url: Optional[str] = None
+    calendly_link: Optional[str] = None
+
+class CreateUserRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    tier: str  # venture_analyst, incubation_admin, admin
+
+class AssignStartupsRequest(BaseModel):
+    user_id: str
+    startup_ids: List[str]
+    assigned_to_type: str  # venture_analyst or incubation_admin
+
+class CreateGrantRequest(BaseModel):
+    name: str
+    funding_amount: str
+    deadline: str
+    sector: str
+    eligibility: str
+    application_link: str
+    stage: str
+    soft_approval: Optional[str] = "No"
+
+class IncubationRegistrationLink(BaseModel):
+    incubation_admin_id: str
+    incubation_admin_name: str
+    link_code: str
+    created_at: str
+    is_active: bool = True
+    usage_count: int = 0
+
+class IncubationUserRegister(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    link_code: str
+
 # Helper functions
+def convert_numpy_types(obj):
+    """Convert numpy types to Python native types for JSON serialization"""
+    if hasattr(obj, 'item'):  # numpy scalar
+        return obj.item()
+    elif hasattr(obj, 'tolist'):  # numpy array
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    return obj
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
@@ -294,6 +395,20 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         "has_completed_screening": bool(user.get('has_completed_screening', False))
     }
 
+async def get_admin_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current user and verify they are admin"""
+    user = await get_current_user(credentials)
+    if user['tier'] != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+async def get_incubation_admin_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current user and verify they are incubation admin"""
+    user = await get_current_user(credentials)
+    if user['tier'] != 'incubation_admin':
+        raise HTTPException(status_code=403, detail="Incubation admin access required")
+    return user
+
 def load_grants_df():
     if GRANTS_CSV.exists():
         # Read CSV with proper encoding and preserve all columns as strings initially
@@ -320,13 +435,18 @@ async def ai_match_grants(profile: dict) -> List[Dict]:
     grants_list = grants_df.to_dict('records')
     
     # Prepare prompt for OpenAI
+    ownership_types = ', '.join(profile.get('ownership_type', [])) if profile.get('ownership_type') else 'N/A'
+    industry_display = profile.get('industry', 'N/A')
+    if profile.get('industry') == 'Other' and profile.get('industry_other'):
+        industry_display = profile.get('industry_other')
+    
     prompt = f"""
 You are an AI grant matching expert. Given a startup profile and a list of grants, 
 rank the top 10 most relevant grants for this startup and provide detailed reasons for each match.
 
 Startup Profile:
 - Name: {profile.get('startup_name', 'N/A')}
-- Industry: {profile.get('industry', 'N/A')}
+- Industry: {industry_display}
 - Stage: {profile.get('stage', 'N/A')}
 - Revenue: ${profile.get('revenue', 0)}
 - Entity Type: {profile.get('entity_type', 'N/A')}
@@ -336,6 +456,8 @@ Startup Profile:
 - Track Record: {profile.get('track_record', 0)} previous projects
 - Past Grant Experience: {profile.get('past_grant_experience', 'No')}
 - Company Size: {profile.get('company_size', 'N/A')} employees
+- Ownership Type: {ownership_types}
+- Funding Need: ${profile.get('funding_need', 0)}
 - Description: {profile.get('description', 'N/A')}
 
 Grants Database:
@@ -355,11 +477,12 @@ Consider these factors for matching:
 1. Sector alignment (industry match) - How well does the startup's industry match the grant's sector focus?
 2. Stage of startup - Does the startup's stage align with the grant's target stage?
 3. Eligibility criteria - Does the startup meet the specific eligibility requirements?
-4. Demographic focus - Does the startup match any demographic requirements (woman-owned, etc.)?
-5. Funding amount suitability - Is the funding amount appropriate for the startup's size and needs?
+4. Demographic focus - Does the startup match any demographic requirements (woman-owned, minority-owned, youth-owned, veteran-owned)?
+5. Funding amount suitability - Is the funding amount appropriate for the startup's funding needs (${profile.get('funding_need', 0)})?
 6. Location/region - Does the startup's location align with the grant's regional focus?
 7. Entity type - Does the startup's entity type match the grant's requirements?
-8. Track record - Does the startup's experience level match the grant's expectations?
+8. Ownership type - Does the startup's ownership structure ({ownership_types}) align with grant preferences?
+9. Track record - Does the startup's experience level match the grant's expectations?
 
 Provide detailed, specific reasons for each match that explain the alignment between the startup and the grant.
 
@@ -501,24 +624,44 @@ async def login(credentials: UserLogin):
     
     user = user_row.iloc[0]
     
-    if not verify_password(credentials.password, user['password']):
+    # Check if password_hash exists (for admin and newer users), otherwise use password field
+    password_to_verify = user.get('password_hash', '')
+    if pd.isna(password_to_verify) or password_to_verify == '':
+        password_to_verify = user.get('password', '')
+    
+    # Handle NaN values
+    if pd.isna(password_to_verify) or password_to_verify == '':
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    if not verify_password(credentials.password, password_to_verify):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     # CRITICAL: Sync tier between users.csv and startups.csv on every login
     # This ensures both files stay in sync even if previous syncs failed
+    # Skip sync for admin tiers (admin, incubation_admin, venture_analyst)
     current_tier = user['tier']
-    sync_user_tier_to_startup(user['email'], current_tier)
+    if current_tier not in ['admin', 'incubation_admin', 'venture_analyst']:
+        sync_user_tier_to_startup(user['email'], current_tier)
     
     token = create_token(user['id'], user['email'])
+    
+    # Helper function to handle NaN values
+    def safe_get(field, default=''):
+        value = user.get(field, default)
+        if pd.isna(value):
+            return default
+        return value
     
     return {
         "token": token,
         "user": {
-            "id": user['id'],
-            "name": user['name'],
-            "email": user['email'],
-            "tier": user['tier'],
-            "has_completed_screening": bool(user.get('has_completed_screening', False))
+            "id": safe_get('id'),
+            "name": safe_get('name'),
+            "email": safe_get('email'),
+            "tier": safe_get('tier'),
+            "has_completed_screening": bool(safe_get('has_completed_screening', False)),
+            "photo_url": safe_get('photo_url', ''),
+            "calendly_link": safe_get('calendly_link', '')
         }
     }
 
@@ -529,8 +672,86 @@ async def get_me(user: dict = Depends(get_current_user)):
         "name": user['name'],
         "email": user['email'],
         "tier": user['tier'],
-        "has_completed_screening": bool(user.get('has_completed_screening', False))
+        "has_completed_screening": bool(user.get('has_completed_screening', False)),
+        "photo_url": user.get('photo_url', ''),
+        "calendly_link": user.get('calendly_link', '')
     }
+
+@api_router.put("/auth/profile")
+async def update_profile(profile_data: VentureAnalystProfileUpdate, user: dict = Depends(get_current_user)):
+    """Update user profile (name, photo_url, calendly_link)"""
+    try:
+        users_df = load_users_df()
+        user_idx = users_df[users_df['id'] == user['id']].index[0]
+        
+        # Update fields if provided
+        if profile_data.name is not None:
+            users_df.at[user_idx, 'name'] = profile_data.name
+        if profile_data.photo_url is not None:
+            users_df.at[user_idx, 'photo_url'] = profile_data.photo_url
+        if profile_data.calendly_link is not None:
+            users_df.at[user_idx, 'calendly_link'] = profile_data.calendly_link
+        
+        save_users_df(users_df)
+        
+        # Return updated user data
+        updated_user = users_df.loc[user_idx]
+        return {
+            "message": "Profile updated successfully",
+            "user": {
+                "id": updated_user['id'],
+                "name": updated_user['name'],
+                "email": updated_user['email'],
+                "tier": updated_user['tier'],
+                "has_completed_screening": bool(updated_user.get('has_completed_screening', False)),
+                "photo_url": updated_user.get('photo_url', ''),
+                "calendly_link": updated_user.get('calendly_link', '')
+            }
+        }
+    except Exception as e:
+        logging.error(f"Error updating profile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update profile")
+
+@api_router.post("/auth/upload-photo")
+async def upload_profile_photo(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Upload profile photo for user"""
+    try:
+        # Create uploads directory for profile photos
+        upload_dir = "backend/uploads/profile_photos"
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # Validate file type
+        allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+        file_extension = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(status_code=400, detail="Invalid file type. Only images are allowed.")
+        
+        # Generate unique filename
+        filename = f"{user['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{file_extension}"
+        file_path = os.path.join(upload_dir, filename)
+        
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Generate URL path for frontend
+        photo_url = f"/backend/uploads/profile_photos/{filename}"
+        
+        # Update user's photo_url in database
+        users_df = load_users_df()
+        user_idx = users_df[users_df['id'] == user['id']].index[0]
+        users_df.at[user_idx, 'photo_url'] = photo_url
+        save_users_df(users_df)
+        
+        return {
+            "message": "Photo uploaded successfully",
+            "photo_url": photo_url
+        }
+    
+    except Exception as e:
+        logging.error(f"Error uploading photo: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload photo: {str(e)}")
 
 @api_router.post("/screening/submit")
 async def submit_screening(screening_data: GrantScreeningCombined, user: dict = Depends(get_current_user)):
@@ -540,7 +761,19 @@ async def submit_screening(screening_data: GrantScreeningCombined, user: dict = 
     # Update user profile in CSV
     users_df = load_users_df()
     user_idx = users_df[users_df['id'] == user['id']].index[0]
-    users_df.at[user_idx, 'profile'] = json.dumps(profile)
+    
+    # Preserve existing profile data (like registration_source for incubation admin links)
+    existing_profile = {}
+    if pd.notna(users_df.at[user_idx, 'profile']) and users_df.at[user_idx, 'profile']:
+        try:
+            existing_profile = json.loads(users_df.at[user_idx, 'profile'])
+        except:
+            pass
+    
+    # Merge screening data with existing profile data, preserving incubation admin info
+    merged_profile = {**existing_profile, **profile}
+    
+    users_df.at[user_idx, 'profile'] = json.dumps(merged_profile)
     users_df.at[user_idx, 'has_completed_screening'] = True
     users_df.at[user_idx, 'screening_completed_at'] = datetime.now(timezone.utc).isoformat()
     save_users_df(users_df)
@@ -559,11 +792,14 @@ async def submit_screening(screening_data: GrantScreeningCombined, user: dict = 
             startups_df.at[startup_idx, 'Founder Name'] = profile['founder_name']
             startups_df.at[startup_idx, 'Entity Type'] = profile['entity_type']
             startups_df.at[startup_idx, 'Location'] = profile['location']
+            startups_df.at[startup_idx, 'Year of Incorporation'] = profile['year_of_incorporation']
             startups_df.at[startup_idx, 'Industry'] = profile['industry']
             startups_df.at[startup_idx, 'Company Size'] = profile['company_size']
             startups_df.at[startup_idx, 'Description'] = profile['description']
             startups_df.at[startup_idx, 'Contact Email'] = profile['contact_email']
             startups_df.at[startup_idx, 'Contact Phone'] = profile['contact_phone']
+            startups_df.at[startup_idx, 'Ownership Type'] = ','.join(profile['ownership_type'])
+            startups_df.at[startup_idx, 'Funding Need'] = profile['funding_need']
             startups_df.at[startup_idx, 'Stage'] = profile['stage']
             startups_df.at[startup_idx, 'Revenue'] = profile['revenue']
             startups_df.at[startup_idx, 'Stability'] = profile['stability']
@@ -581,11 +817,14 @@ async def submit_screening(screening_data: GrantScreeningCombined, user: dict = 
                 'Founder Name': profile['founder_name'],
                 'Entity Type': profile['entity_type'],
                 'Location': profile['location'],
+                'Year of Incorporation': profile['year_of_incorporation'],
                 'Industry': profile['industry'],
                 'Company Size': profile['company_size'],
                 'Description': profile['description'],
                 'Contact Email': profile['contact_email'],
                 'Contact Phone': profile['contact_phone'],
+                'Ownership Type': ','.join(profile['ownership_type']),
+                'Funding Need': profile['funding_need'],
                 'Stage': profile['stage'],
                 'Revenue': profile['revenue'],
                 'Stability': profile['stability'],
@@ -606,7 +845,7 @@ async def submit_screening(screening_data: GrantScreeningCombined, user: dict = 
         # Continue with the rest of the function even if startup saving fails
     
     # Run AI matching
-    matches = await ai_match_grants(profile)
+    matches = await ai_match_grants(merged_profile)
     
     # Save matches to CSV
     grant_matches_df = load_grant_matches_df()
@@ -744,6 +983,7 @@ async def get_all_grants(user: dict = Depends(get_current_user)):
     # Clean the data to avoid JSON serialization issues
     grants_df = grants_df.fillna("")  # Replace NaN with empty strings
     grants_list = grants_df.to_dict('records')
+    grants_list = convert_numpy_types(grants_list)
     return {"grants": grants_list[:20]}  # Limit to 20 for performance
 
 @api_router.get("/startups/my")
@@ -778,6 +1018,7 @@ async def get_all_startups(user: dict = Depends(get_current_user)):
     # Clean the data to avoid JSON serialization issues
     startups_df = startups_df.fillna("")  # Replace NaN with empty strings
     startups_list = startups_df.to_dict('records')
+    startups_list = convert_numpy_types(startups_list)
     return {"startups": startups_list}
 
 # Grant Tracking Endpoints
@@ -814,6 +1055,7 @@ async def get_startups_for_tracking(user: dict = Depends(get_current_user)):
         startups_list.append({
             "id": startup['ID'],
             "name": startup['Name'],
+            "founder_name": startup['Founder Name'],
             "email": startup['Email'],
             "industry": startup['Industry'],
             "location": startup['Location'],
@@ -1353,6 +1595,24 @@ def generate_grants_pdf(grants_data, user_name="User"):
         reason_para = Paragraph(f"<b>Why This Matches:</b> {reason_text}", reason_style)
         card_data.append([reason_para])
         
+        # Add application link
+        app_link = grant.get('application_link', 'N/A')
+        link_style = ParagraphStyle(
+            'LinkStyle',
+            parent=styles['Normal'],
+            fontSize=11,
+            textColor=colors.HexColor('#5d248f'),
+            fontName='Helvetica',
+            spaceAfter=0,
+            leftIndent=0,
+            leading=14
+        )
+        if app_link != 'N/A' and app_link:
+            link_para = Paragraph(f"<b>Application Link:</b> <link href='{app_link}' color='#5d248f'>{app_link}</link>", link_style)
+        else:
+            link_para = Paragraph(f"<b>Application Link:</b> Not Available", link_style)
+        card_data.append([link_para])
+        
         # Create the card table with better styling
         card_table = Table(card_data, colWidths=[7*inch])
         
@@ -1476,6 +1736,761 @@ async def download_grants_pdf(user: dict = Depends(get_current_user)):
     except Exception as e:
         logging.error(f"PDF generation error: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate PDF")
+
+# ============= ADMIN ENDPOINTS =============
+
+@api_router.post("/admin/create-user")
+async def admin_create_user(request: CreateUserRequest, admin: dict = Depends(get_admin_user)):
+    """Admin endpoint to create venture analysts and incubation admins"""
+    try:
+        users_df = load_users_df()
+        
+        # Check if email already exists
+        if not users_df.empty and (users_df['email'].str.lower() == request.email.lower()).any():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Create new user
+        user_id = str(uuid.uuid4())
+        hashed_password = hash_password(request.password)
+        
+        new_user = {
+            'id': user_id,
+            'name': request.name,
+            'email': request.email,
+            'password': '',
+            'tier': request.tier,
+            'has_completed_screening': True if request.tier in ['venture_analyst', 'incubation_admin'] else False,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'profile': '',
+            'screening_completed_at': datetime.now(timezone.utc).isoformat() if request.tier in ['venture_analyst', 'incubation_admin'] else '',
+            'upgraded_at': '',
+            'coupon_used': '',
+            'password_hash': hashed_password,
+            'photo_url': '',
+            'calendly_link': ''
+        }
+        
+        users_df = pd.concat([users_df, pd.DataFrame([new_user])], ignore_index=True)
+        save_users_df(users_df)
+        
+        return {"message": "User created successfully", "user_id": user_id}
+        
+    except Exception as e:
+        logging.error(f"Error creating user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/admin/assign-startups")
+async def admin_assign_startups(request: AssignStartupsRequest, admin: dict = Depends(get_admin_user)):
+    """Admin endpoint to assign startups to venture analysts or incubation admins"""
+    try:
+        assignments_df = load_startup_assignments_df()
+        
+        # Remove existing assignments for these startups to this user
+        assignments_df = assignments_df[~((assignments_df['startup_id'].isin(request.startup_ids)) & 
+                                         (assignments_df['assigned_to_id'] == request.user_id))]
+        
+        # Create new assignments
+        new_assignments = []
+        for startup_id in request.startup_ids:
+            new_assignments.append({
+                'id': str(uuid.uuid4()),
+                'startup_id': startup_id,
+                'assigned_to_id': request.user_id,
+                'assigned_to_type': request.assigned_to_type,
+                'assigned_by': admin['id'],
+                'assigned_at': datetime.now(timezone.utc).isoformat()
+            })
+        
+        if new_assignments:
+            assignments_df = pd.concat([assignments_df, pd.DataFrame(new_assignments)], ignore_index=True)
+            save_startup_assignments_df(assignments_df)
+        
+        return {"message": "Startups assigned successfully", "count": len(request.startup_ids)}
+        
+    except Exception as e:
+        logging.error(f"Error assigning startups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/admin/all-startups")
+async def admin_get_all_startups(admin: dict = Depends(get_admin_user)):
+    """Get all startups with their information, tier, matched grants, and assigned analysts"""
+    try:
+        users_df = load_users_df()
+        startups_df = load_startups_df()
+        grant_matches_df = load_grant_matches_df()
+        assignments_df = load_startup_assignments_df()
+        tracking_df = load_grant_tracking_df()
+        
+        # Helper function to handle NaN values and numpy types
+        def safe_value(value, default=''):
+            if pd.isna(value):
+                return default
+            # Convert numpy types to Python native types for JSON serialization
+            if hasattr(value, 'item'):  # numpy scalar
+                return value.item()
+            return value
+        
+        # Filter for startup users (not admin/venture_analyst/incubation_admin)
+        startup_users = users_df[~users_df['tier'].isin(['admin', 'venture_analyst', 'incubation_admin'])]
+        
+        startups_data = []
+        for _, user in startup_users.iterrows():
+            # Get startup details from startups.csv
+            startup_info = startups_df[startups_df['Email'].str.lower() == user['email'].lower()]
+            
+            profile = None
+            if not startup_info.empty:
+                startup = startup_info.iloc[0]
+                profile = {
+                    'startup_name': safe_value(startup.get('Name', '')),
+                    'founder_name': safe_value(startup.get('Founder Name', '')),
+                    'entity_type': safe_value(startup.get('Entity Type', '')),
+                    'location': safe_value(startup.get('Location', '')),
+                    'year_of_incorporation': safe_value(startup.get('Year of Incorporation', '')),
+                    'industry': safe_value(startup.get('Industry', '')),
+                    'company_size': safe_value(startup.get('Company Size', '')),
+                    'description': safe_value(startup.get('Description', '')),
+                    'contact_email': safe_value(startup.get('Contact Email', '')),
+                    'contact_phone': safe_value(startup.get('Contact Phone', '')),
+                    'ownership_type': safe_value(startup.get('Ownership Type', '')),
+                    'funding_need': safe_value(startup.get('Funding Need', 0)),
+                    'stage': safe_value(startup.get('Stage', '')),
+                    'revenue': safe_value(startup.get('Revenue', 0)),
+                    'stability': safe_value(startup.get('Stability', '')),
+                    'demographic': safe_value(startup.get('Demographic', '')),
+                    'track_record': safe_value(startup.get('Track Record', '')),
+                    'past_grant_experience': safe_value(startup.get('Past Grant Experience', ''))
+                }
+            
+            # Get matched grants
+            user_matches = grant_matches_df[grant_matches_df['user_id'] == user['id']]
+            matched_grants = []
+            for _, match in user_matches.iterrows():
+                try:
+                    match_data = json.loads(match['match_data']) if isinstance(match['match_data'], str) else match['match_data']
+                    matched_grants.append({
+                        'grant_id': match_data.get('grant_id', ''),
+                        'name': match_data.get('name', ''),
+                        'funding_amount': match_data.get('funding_amount', '')
+                    })
+                except:
+                    pass
+            
+            # Get assigned analyst
+            assignment = assignments_df[assignments_df['startup_id'] == user['id']]
+            assigned_analyst = None
+            if not assignment.empty:
+                analyst_id = assignment.iloc[0]['assigned_to_id']
+                analyst = users_df[users_df['id'] == analyst_id]
+                if not analyst.empty:
+                    assigned_analyst = {
+                        'id': analyst.iloc[0]['id'],
+                        'name': analyst.iloc[0]['name'],
+                        'type': assignment.iloc[0]['assigned_to_type']
+                    }
+            
+            # Get tracking data for expert tier
+            tracking_data = []
+            if user['tier'] == 'expert':
+                user_tracking = tracking_df[tracking_df['startup_id'] == user['id']]
+                for _, track in user_tracking.iterrows():
+                    analyst_name = "Unknown"
+                    if pd.notna(track.get('user_id')):
+                        analyst = users_df[users_df['id'] == track['user_id']]
+                        if not analyst.empty:
+                            analyst_name = analyst.iloc[0]['name']
+                    
+                    tracking_data.append({
+                        'grant_id': track.get('grant_id', ''),
+                        'status': track.get('status', ''),
+                        'progress': track.get('progress', ''),
+                        'applied_by': analyst_name
+                    })
+            
+            startups_data.append({
+                'id': safe_value(user['id']),
+                'name': safe_value(user['name']),
+                'email': safe_value(user['email']),
+                'tier': safe_value(user['tier']),
+                'created_at': safe_value(user.get('created_at', '')),
+                'password_hash': safe_value(user.get('password_hash', '')),
+                'has_completed_screening': bool(user.get('has_completed_screening', False)),
+                'profile': profile,
+                'matched_grants': matched_grants,
+                'assigned_analyst': assigned_analyst,
+                'tracking': tracking_data
+            })
+        
+        return {"startups": convert_numpy_types(startups_data)}
+        
+    except Exception as e:
+        logging.error(f"Error fetching startups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/admin/kpis")
+async def admin_get_kpis(admin: dict = Depends(get_admin_user)):
+    """Get admin KPIs"""
+    try:
+        users_df = load_users_df()
+        tracking_df = load_grant_tracking_df()
+        assignments_df = load_startup_assignments_df()
+        
+        total_startups = len(users_df[~users_df['tier'].isin(['admin', 'venture_analyst', 'incubation_admin'])])
+        total_analysts = len(users_df[users_df['tier'] == 'venture_analyst'])
+        total_incubation_admins = len(users_df[users_df['tier'] == 'incubation_admin'])
+        
+        # Tier distribution
+        tier_counts = users_df[~users_df['tier'].isin(['admin', 'venture_analyst', 'incubation_admin'])]['tier'].value_counts().to_dict()
+        
+        # Tracking stats
+        total_applications = len(tracking_df)
+        status_counts = tracking_df['status'].value_counts().to_dict() if not tracking_df.empty else {}
+        
+        # Assignment stats
+        total_assignments = len(assignments_df)
+        
+        return {
+            "total_startups": int(total_startups),
+            "total_analysts": int(total_analysts),
+            "total_incubation_admins": int(total_incubation_admins),
+            "tier_distribution": tier_counts,
+            "total_applications": int(total_applications),
+            "application_status": status_counts,
+            "total_assignments": int(total_assignments)
+        }
+        
+    except Exception as e:
+        logging.error(f"Error fetching KPIs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/admin/grants")
+async def admin_create_grant(request: CreateGrantRequest, admin: dict = Depends(get_admin_user)):
+    """Admin endpoint to add new grants"""
+    try:
+        grants_df = load_grants_df()
+        
+        # Generate new grant ID
+        max_id = grants_df['Grant ID'].astype(int).max() if not grants_df.empty and 'Grant ID' in grants_df.columns else 0
+        new_grant_id = str(max_id + 1)
+        
+        new_grant = {
+            'Grant ID': new_grant_id,
+            'Name': request.name,
+            'Funding Amount': request.funding_amount,
+            'Due Date': request.deadline,
+            'Sector(s)': request.sector,
+            'Eligibility Criteria': request.eligibility,
+            'Application Link': request.application_link,
+            'Stage of Startup': request.stage
+        }
+        
+        grants_df = pd.concat([grants_df, pd.DataFrame([new_grant])], ignore_index=True)
+        grants_df.to_csv(GRANTS_CSV, index=False)
+        
+        # Add to soft approval if needed
+        if request.soft_approval == "Yes":
+            soft_approvals = load_soft_approvals()
+            soft_approvals_df = pd.DataFrame(soft_approvals, columns=['grant_id'])
+            soft_approvals_df = pd.concat([soft_approvals_df, pd.DataFrame([{'grant_id': new_grant_id}])], ignore_index=True)
+            soft_approvals_df.to_csv(SOFT_APPROVAL_CSV, index=False)
+        
+        return {"message": "Grant created successfully", "grant_id": new_grant_id}
+        
+    except Exception as e:
+        logging.error(f"Error creating grant: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/admin/grants")
+async def admin_get_all_grants(admin: dict = Depends(get_admin_user)):
+    """Get all grants in the database"""
+    try:
+        grants_df = load_grants_df()
+        soft_approvals = load_soft_approvals()
+        
+        grants_list = []
+        for _, grant in grants_df.iterrows():
+            grants_list.append({
+                'grant_id': str(grant['Grant ID']),
+                'name': str(grant['Name']),
+                'funding_amount': str(grant['Funding Amount']),
+                'deadline': str(grant['Due Date']),
+                'sector': str(grant['Sector(s)']),
+                'eligibility': str(grant['Eligibility Criteria']),
+                'application_link': str(grant['Application Link']),
+                'stage': str(grant['Stage of Startup']),
+                'soft_approval': 'Yes' if grant['Grant ID'] in soft_approvals else 'No'
+            })
+        
+        return {"grants": convert_numpy_types(grants_list)}
+        
+    except Exception as e:
+        logging.error(f"Error fetching grants: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/admin/users")
+async def admin_get_users(admin: dict = Depends(get_admin_user)):
+    """Get all venture analysts and incubation admins"""
+    try:
+        users_df = load_users_df()
+        
+        # Helper function to handle NaN values and numpy types
+        def safe_value(value, default=''):
+            if pd.isna(value):
+                return default
+            # Convert numpy types to Python native types for JSON serialization
+            if hasattr(value, 'item'):  # numpy scalar
+                return value.item()
+            return value
+        
+        analysts = users_df[users_df['tier'] == 'venture_analyst']
+        incubation_admins = users_df[users_df['tier'] == 'incubation_admin']
+        
+        analysts_list = []
+        for _, analyst in analysts.iterrows():
+            analysts_list.append({
+                'id': safe_value(analyst['id']),
+                'name': safe_value(analyst['name']),
+                'email': safe_value(analyst['email']),
+                'created_at': safe_value(analyst.get('created_at', '')),
+                'photo_url': safe_value(analyst.get('photo_url', '')),
+                'calendly_link': safe_value(analyst.get('calendly_link', ''))
+            })
+        
+        incubation_list = []
+        for _, admin_user in incubation_admins.iterrows():
+            incubation_list.append({
+                'id': safe_value(admin_user['id']),
+                'name': safe_value(admin_user['name']),
+                'email': safe_value(admin_user['email']),
+                'created_at': safe_value(admin_user.get('created_at', ''))
+            })
+        
+        return {
+            "venture_analysts": convert_numpy_types(analysts_list),
+            "incubation_admins": convert_numpy_types(incubation_list)
+        }
+        
+    except Exception as e:
+        logging.error(f"Error fetching users: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============= INCUBATION ADMIN ENDPOINTS =============
+
+@api_router.get("/incubation-admin/startups")
+async def incubation_get_startups(incubation_admin: dict = Depends(get_incubation_admin_user)):
+    """Get assigned and added startups for incubation admin"""
+    try:
+        users_df = load_users_df()
+        assignments_df = load_startup_assignments_df()
+        grant_matches_df = load_grant_matches_df()
+        tracking_df = load_grant_tracking_df()
+        
+        # Get assigned startups
+        assigned_startups = assignments_df[assignments_df['assigned_to_id'] == incubation_admin['id']]['startup_id'].tolist()
+        
+        # Filter startups
+        startups = users_df[users_df['id'].isin(assigned_startups)]
+        
+        startups_data = []
+        for _, user in startups.iterrows():
+            # Get matched grants
+            user_matches = grant_matches_df[grant_matches_df['user_id'] == user['id']]
+            matched_grants = []
+            for _, match in user_matches.iterrows():
+                try:
+                    match_data = json.loads(match['match_data']) if isinstance(match['match_data'], str) else match['match_data']
+                    matched_grants.append({
+                        'grant_id': match_data.get('grant_id', ''),
+                        'name': match_data.get('name', ''),
+                        'funding_amount': match_data.get('funding_amount', '')
+                    })
+                except:
+                    pass
+            
+            # Get tracking data for expert tier
+            tracking_data = []
+            if user['tier'] == 'expert':
+                user_tracking = tracking_df[tracking_df['startup_id'] == user['id']]
+                for _, track in user_tracking.iterrows():
+                    analyst_name = "Unknown"
+                    if pd.notna(track.get('user_id')):
+                        analyst = users_df[users_df['id'] == track['user_id']]
+                        if not analyst.empty:
+                            analyst_name = analyst.iloc[0]['name']
+                    
+                    tracking_data.append({
+                        'grant_id': track.get('grant_id', ''),
+                        'status': track.get('status', ''),
+                        'progress': track.get('progress', ''),
+                        'applied_by': analyst_name
+                    })
+            
+            startups_data.append({
+                'id': user['id'],
+                'name': user['name'],
+                'email': user['email'],
+                'tier': user['tier'],
+                'created_at': user.get('created_at', ''),
+                'has_completed_screening': bool(user.get('has_completed_screening', False)),
+                'matched_grants': matched_grants,
+                'tracking': tracking_data
+            })
+        
+        return {"startups": convert_numpy_types(startups_data)}
+        
+    except Exception as e:
+        logging.error(f"Error fetching startups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/incubation-admin/grants")
+async def incubation_create_grant(request: CreateGrantRequest, incubation_admin: dict = Depends(get_incubation_admin_user)):
+    """Incubation admin endpoint to add new grants"""
+    try:
+        grants_df = load_grants_df()
+        
+        # Generate new grant ID
+        max_id = grants_df['Grant ID'].astype(int).max() if not grants_df.empty and 'Grant ID' in grants_df.columns else 0
+        new_grant_id = str(max_id + 1)
+        
+        new_grant = {
+            'Grant ID': new_grant_id,
+            'Name': request.name,
+            'Funding Amount': request.funding_amount,
+            'Due Date': request.deadline,
+            'Sector(s)': request.sector,
+            'Eligibility Criteria': request.eligibility,
+            'Application Link': request.application_link,
+            'Stage of Startup': request.stage
+        }
+        
+        grants_df = pd.concat([grants_df, pd.DataFrame([new_grant])], ignore_index=True)
+        grants_df.to_csv(GRANTS_CSV, index=False)
+        
+        if request.soft_approval == "Yes":
+            soft_approvals = load_soft_approvals()
+            soft_approvals_df = pd.DataFrame(soft_approvals, columns=['grant_id'])
+            soft_approvals_df = pd.concat([soft_approvals_df, pd.DataFrame([{'grant_id': new_grant_id}])], ignore_index=True)
+            soft_approvals_df.to_csv(SOFT_APPROVAL_CSV, index=False)
+        
+        return {"message": "Grant created successfully", "grant_id": new_grant_id}
+        
+    except Exception as e:
+        logging.error(f"Error creating grant: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/incubation-admin/grants")
+async def incubation_get_grants(incubation_admin: dict = Depends(get_incubation_admin_user)):
+    """Get all grants for incubation admin"""
+    try:
+        grants_df = load_grants_df()
+        soft_approvals = load_soft_approvals()
+        
+        grants_list = []
+        for _, grant in grants_df.iterrows():
+            grants_list.append({
+                'grant_id': str(grant['Grant ID']),
+                'name': str(grant['Name']),
+                'funding_amount': str(grant['Funding Amount']),
+                'deadline': str(grant['Due Date']),
+                'sector': str(grant['Sector(s)']),
+                'eligibility': str(grant['Eligibility Criteria']),
+                'application_link': str(grant['Application Link']),
+                'stage': str(grant['Stage of Startup']),
+                'soft_approval': 'Yes' if grant['Grant ID'] in soft_approvals else 'No'
+            })
+        
+        return {"grants": convert_numpy_types(grants_list)}
+        
+    except Exception as e:
+        logging.error(f"Error fetching grants: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============= INCUBATION ADMIN REGISTRATION LINKS =============
+
+@api_router.post("/incubation-admin/generate-link")
+async def generate_incubation_registration_link(incubation_admin: dict = Depends(get_incubation_admin_user)):
+    """Generate a unique registration link for the incubation admin"""
+    try:
+        links_df = load_incubation_links_df()
+        
+        # Generate unique link code
+        link_code = generate_link_code()
+        while not links_df.empty and link_code in links_df['link_code'].values:
+            link_code = generate_link_code()
+        
+        # Create new link
+        link_id = str(uuid.uuid4())
+        new_link = {
+            'id': link_id,
+            'incubation_admin_id': incubation_admin['id'],
+            'incubation_admin_name': incubation_admin['name'],
+            'link_code': link_code,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'is_active': True,
+            'usage_count': 0
+        }
+        
+        # Add to dataframe
+        new_link_df = pd.DataFrame([new_link])
+        links_df = pd.concat([links_df, new_link_df], ignore_index=True)
+        save_incubation_links_df(links_df)
+        
+        # Generate the full registration URL
+        base_url = "http://localhost:3000"  # Frontend URL
+        registration_url = f"{base_url}/register/incubation/{link_code}"
+        
+        return {
+            "message": "Registration link generated successfully",
+            "link_code": link_code,
+            "registration_url": registration_url,
+            "link_id": link_id
+        }
+        
+    except Exception as e:
+        logging.error(f"Error generating registration link: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/incubation-admin/links")
+async def get_incubation_registration_links(incubation_admin: dict = Depends(get_incubation_admin_user)):
+    """Get all registration links for the incubation admin"""
+    try:
+        links_df = load_incubation_links_df()
+        
+        # Filter links for this incubation admin
+        admin_links = links_df[links_df['incubation_admin_id'] == incubation_admin['id']]
+        
+        links_list = []
+        for _, link in admin_links.iterrows():
+            base_url = "http://localhost:3000"
+            registration_url = f"{base_url}/register/incubation/{link['link_code']}"
+            
+            links_list.append({
+                'id': link['id'],
+                'link_code': link['link_code'],
+                'registration_url': registration_url,
+                'created_at': link['created_at'],
+                'is_active': bool(link['is_active']),
+                'usage_count': int(link['usage_count'])
+            })
+        
+        return {"links": convert_numpy_types(links_list)}
+        
+    except Exception as e:
+        logging.error(f"Error fetching registration links: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/incubation-admin/links/{link_id}/toggle")
+async def toggle_incubation_registration_link(link_id: str, incubation_admin: dict = Depends(get_incubation_admin_user)):
+    """Toggle the active status of a registration link"""
+    try:
+        links_df = load_incubation_links_df()
+        
+        # Find the link
+        link_idx = links_df[(links_df['id'] == link_id) & (links_df['incubation_admin_id'] == incubation_admin['id'])].index
+        
+        if link_idx.empty:
+            raise HTTPException(status_code=404, detail="Link not found")
+        
+        # Toggle the active status
+        current_status = links_df.at[link_idx[0], 'is_active']
+        links_df.at[link_idx[0], 'is_active'] = not current_status
+        
+        save_incubation_links_df(links_df)
+        
+        return {
+            "message": f"Link {'activated' if not current_status else 'deactivated'} successfully",
+            "is_active": not current_status
+        }
+        
+    except Exception as e:
+        logging.error(f"Error toggling registration link: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/incubation-admin/startups-via-links")
+async def get_startups_via_registration_links(incubation_admin: dict = Depends(get_incubation_admin_user)):
+    """Get startups that registered via this incubation admin's registration links"""
+    try:
+        users_df = load_users_df()
+        links_df = load_incubation_links_df()
+        grant_matches_df = load_grant_matches_df()
+        tracking_df = load_grant_tracking_df()
+        
+        # Get all link codes for this incubation admin
+        admin_links = links_df[links_df['incubation_admin_id'] == incubation_admin['id']]
+        link_codes = admin_links['link_code'].tolist()
+        
+        # Find users who registered via these links (stored in profile as registration_source)
+        startups_data = []
+        for _, user in users_df.iterrows():
+            # Check if user has registration source indicating they came from this incubation admin
+            profile_data = {}
+            if pd.notna(user.get('profile')) and user['profile']:
+                try:
+                    profile_data = json.loads(user['profile'])
+                except:
+                    pass
+            
+            # Check if this user was registered via one of our links
+            registration_source = profile_data.get('registration_source', '')
+            logging.info(f"Checking user {user['email']}: registration_source='{registration_source}', link_codes={link_codes}")
+            
+            if registration_source in link_codes:
+                # Get matched grants
+                user_matches = grant_matches_df[grant_matches_df['user_id'] == user['id']]
+                matched_grants = []
+                for _, match in user_matches.iterrows():
+                    try:
+                        match_data = json.loads(match['match_data']) if isinstance(match['match_data'], str) else match['match_data']
+                        matched_grants.append({
+                            'grant_id': match_data.get('grant_id', ''),
+                            'name': match_data.get('name', ''),
+                            'funding_amount': match_data.get('funding_amount', '')
+                        })
+                    except:
+                        pass
+                
+                # Get tracking data for expert tier
+                tracking_data = []
+                if user['tier'] == 'expert':
+                    user_tracking = tracking_df[tracking_df['startup_id'] == user['id']]
+                    for _, track in user_tracking.iterrows():
+                        analyst_name = "Unknown"
+                        if pd.notna(track.get('user_id')):
+                            analyst = users_df[users_df['id'] == track['user_id']]
+                            if not analyst.empty:
+                                analyst_name = analyst.iloc[0]['name']
+                        
+                        tracking_data.append({
+                            'grant_id': track.get('grant_id', ''),
+                            'status': track.get('status', ''),
+                            'progress': track.get('progress', ''),
+                            'applied_by': analyst_name
+                        })
+                
+                startups_data.append({
+                    'id': user['id'],
+                    'name': user['name'],
+                    'email': user['email'],
+                    'tier': user['tier'],
+                    'created_at': user.get('created_at', ''),
+                    'has_completed_screening': bool(user.get('has_completed_screening', False)),
+                    'registration_source': registration_source,
+                    'profile': profile_data,
+                    'matched_grants': matched_grants,
+                    'tracking': tracking_data
+                })
+        
+        return {"startups": convert_numpy_types(startups_data)}
+        
+    except Exception as e:
+        logging.error(f"Error fetching startups via registration links: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============= INCUBATION REGISTRATION ENDPOINT =============
+
+@api_router.post("/auth/register/incubation")
+async def register_via_incubation_link(user: IncubationUserRegister):
+    """Register a new user via incubation admin registration link"""
+    try:
+        # Validate the link code
+        links_df = load_incubation_links_df()
+        link_row = links_df[(links_df['link_code'] == user.link_code) & (links_df['is_active'] == True)]
+        
+        if link_row.empty:
+            raise HTTPException(status_code=400, detail="Invalid or inactive registration link")
+        
+        link_info = link_row.iloc[0]
+        
+        # Load existing users
+        users_df = load_users_df()
+        
+        # Check if user exists
+        if not users_df.empty and user.email in users_df['email'].values:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Create new user
+        user_id = str(uuid.uuid4())
+        new_user = {
+            "id": user_id,
+            "name": user.name,
+            "email": user.email,
+            "password": hash_password(user.password),
+            "tier": "free",
+            "has_completed_screening": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "profile": json.dumps({
+                "registration_source": user.link_code,
+                "incubation_admin_id": link_info['incubation_admin_id'],
+                "incubation_admin_name": link_info['incubation_admin_name']
+            }),
+            "screening_completed_at": "",
+            "upgraded_at": "",
+            "coupon_used": ""
+        }
+        
+        # Add new user to dataframe
+        new_user_df = pd.DataFrame([new_user])
+        users_df = pd.concat([users_df, new_user_df], ignore_index=True)
+        save_users_df(users_df)
+        
+        # Update usage count for the link
+        link_idx = links_df[links_df['link_code'] == user.link_code].index
+        if not link_idx.empty:
+            links_df.at[link_idx[0], 'usage_count'] = links_df.at[link_idx[0], 'usage_count'] + 1
+            save_incubation_links_df(links_df)
+        
+        return {
+            "message": "Registration successful",
+            "user_id": user_id,
+            "incubation_admin": link_info['incubation_admin_name']
+        }
+        
+    except Exception as e:
+        logging.error(f"Error in incubation registration: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============= VENTURE ANALYST ENDPOINTS (MODIFIED) =============
+
+@api_router.get("/venture-analyst/assigned-startups")
+async def venture_analyst_get_assigned_startups(analyst: dict = Depends(get_current_user)):
+    """Get startups assigned to the venture analyst"""
+    try:
+        if analyst['tier'] != 'venture_analyst':
+            raise HTTPException(status_code=403, detail="Venture analyst access required")
+        
+        users_df = load_users_df()
+        assignments_df = load_startup_assignments_df()
+        
+        # Get assigned startup IDs
+        assigned_startup_ids = assignments_df[assignments_df['assigned_to_id'] == analyst['id']]['startup_id'].tolist()
+        
+        # Get startup details
+        assigned_startups = users_df[users_df['id'].isin(assigned_startup_ids)]
+        
+        startups_list = []
+        for _, startup in assigned_startups.iterrows():
+            profile_data = {}
+            if pd.notna(startup.get('profile')) and startup['profile']:
+                try:
+                    profile_data = json.loads(startup['profile'])
+                except:
+                    pass
+            
+            startups_list.append({
+                'id': startup['id'],
+                'name': profile_data.get('startup_name', startup['name']),
+                'founder_name': profile_data.get('founder_name', ''),
+                'industry': profile_data.get('industry', ''),
+                'location': profile_data.get('location', ''),
+                'email': startup['email'],
+                'tier': startup['tier']
+            })
+        
+        return {"startups": convert_numpy_types(startups_list)}
+        
+    except Exception as e:
+        logging.error(f"Error fetching assigned startups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 app.include_router(api_router)
 

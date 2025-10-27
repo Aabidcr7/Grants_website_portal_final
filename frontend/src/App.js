@@ -6,6 +6,7 @@ import RegisterPage from './pages/RegisterPage';
 import LoginPage from './pages/LoginPage';
 import ScreeningForm from './pages/ScreeningForm';
 import Dashboard from './pages/Dashboard';
+import IncubationRegisterPage from './pages/IncubationRegisterPage';
 import { Toaster } from './components/ui/sonner';
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/register/incubation/:linkCode" element={<IncubationRegisterPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/screening" element={<ScreeningForm />} />
           <Route path="/dashboard" element={<Dashboard />} />

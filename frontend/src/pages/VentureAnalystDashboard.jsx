@@ -27,6 +27,14 @@ import {
 import axios from 'axios';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+
+// Helper to get full photo URL
+const getPhotoUrl = (photoUrl) => {
+  if (!photoUrl) return '';
+  if (photoUrl.startsWith('http')) return photoUrl;
+  return `${BACKEND_URL}${photoUrl}`;
+};
 
 const VentureAnalystDashboard = ({ user, handleLogout }) => {
   const [startups, setStartups] = useState([]);
@@ -39,6 +47,14 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingTracking, setEditingTracking] = useState(null);
   const [screenshotFile, setScreenshotFile] = useState(null);
+  const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    name: user?.name || '',
+    photo_url: user?.photo_url || '',
+    calendly_link: user?.calendly_link || ''
+  });
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(user?.photo_url ? getPhotoUrl(user.photo_url) : '');
   const { toast } = useToast();
 
   // Form states
@@ -91,7 +107,7 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
   const loadStartups = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get(`${API}/tracking/startups`, {
+      const response = await axios.get(`${API}/venture-analyst/assigned-startups`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setStartups(response.data.startups);
@@ -99,7 +115,7 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
       console.error('Error loading startups:', error);
       toast({
         title: "Error",
-        description: "Failed to load startups",
+        description: "Failed to load assigned startups",
         variant: "destructive"
       });
     }
@@ -318,6 +334,72 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
     setIsEditDialogOpen(true);
   };
 
+  const handlePhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setPhotoFile(file);
+      // Create preview URL
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPhotoPreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleProfileUpdate = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      let updatedPhotoUrl = profileForm.photo_url;
+      
+      // Upload photo if a file was selected
+      if (photoFile) {
+        const formData = new FormData();
+        formData.append('file', photoFile);
+        
+        const uploadResponse = await axios.post(`${API}/auth/upload-photo`, formData, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
+          }
+        });
+        
+        updatedPhotoUrl = uploadResponse.data.photo_url;
+      }
+      
+      // Update profile with photo URL
+      const response = await axios.put(`${API}/auth/profile`, {
+        name: profileForm.name,
+        photo_url: updatedPhotoUrl,
+        calendly_link: profileForm.calendly_link
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Update user in localStorage
+      const updatedUser = response.data.user;
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      
+      toast({
+        title: "Profile Updated",
+        description: "Your profile has been updated successfully"
+      });
+      
+      setIsProfileDialogOpen(false);
+      setPhotoFile(null);
+      
+      // Reload page to reflect changes
+      window.location.reload();
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      toast({
+        title: "Update Failed",
+        description: "Failed to update profile. Please try again.",
+        variant: "destructive"
+      });
+    }
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'Draft': return 'bg-gray-100 text-gray-800';
@@ -353,7 +435,65 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
               <p className="text-gray-600">Track startup grant applications and progress</p>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">Welcome, {user?.name}</span>
+              {/* Venture Analyst Profile */}
+              <div className="flex items-center space-x-3 bg-white rounded-lg p-3 shadow-sm border border-gray-200">
+                {user?.photo_url ? (
+                  <img 
+                    src={getPhotoUrl(user.photo_url)} 
+                    alt={user.name}
+                    className="w-12 h-12 rounded-full object-cover border-2 border-[#5d248f]"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      e.target.nextSibling.style.display = 'flex';
+                    }}
+                  />
+                ) : null}
+                {!user?.photo_url ? (
+                  <div className="w-12 h-12 rounded-full bg-[#5d248f] flex items-center justify-center text-white font-bold text-lg">
+                    {user?.name?.charAt(0)?.toUpperCase() || 'V'}
+                  </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-full bg-[#5d248f] items-center justify-center text-white font-bold text-lg" style={{display: 'none'}}>
+                    {user?.name?.charAt(0)?.toUpperCase() || 'V'}
+                  </div>
+                )}
+                <div className="flex flex-col">
+                  <span className="font-semibold text-gray-900">{user?.name}</span>
+                  <span className="text-xs text-gray-500">Venture Analyst</span>
+                </div>
+              </div>
+              
+              {/* Edit Profile Button */}
+              <Button 
+                variant="outline" 
+                className="border-gray-300 hover:border-[#5d248f] hover:text-[#5d248f]"
+                onClick={() => {
+                  setProfileForm({
+                    name: user?.name || '',
+                    photo_url: user?.photo_url || '',
+                    calendly_link: user?.calendly_link || ''
+                  });
+                  setPhotoFile(null);
+                  setPhotoPreview(user?.photo_url ? getPhotoUrl(user.photo_url) : '');
+                  setIsProfileDialogOpen(true);
+                }}
+              >
+                <Edit className="w-4 h-4 mr-2" />
+                Edit Profile
+              </Button>
+              
+              {/* Calendly Link Button */}
+              {user?.calendly_link && (
+                <Button 
+                  variant="outline" 
+                  className="border-[#5d248f] text-[#5d248f] hover:bg-[#5d248f] hover:text-white"
+                  onClick={() => window.open(user.calendly_link, '_blank')}
+                >
+                  <Calendar className="w-4 h-4 mr-2" />
+                  Schedule Meeting
+                </Button>
+              )}
+              
               <Button variant="outline" onClick={handleLogout}>
                 Logout
               </Button>
@@ -457,7 +597,7 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
                         <SelectContent>
                           {startups.map((startup) => (
                             <SelectItem key={startup.id} value={startup.id}>
-                              {startup.name} ({startup.industry})
+                              {startup.name} - {startup.founder_name} ({startup.industry})
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -671,7 +811,7 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
                         <SelectContent>
                           {startups.map((startup) => (
                             <SelectItem key={startup.id} value={startup.id}>
-                              {startup.name} ({startup.industry})
+                              {startup.name} - {startup.founder_name} ({startup.industry})
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -747,7 +887,7 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
               <SelectContent>
                 {startups.map((startup) => (
                   <SelectItem key={startup.id} value={startup.id}>
-                    {startup.name} - {startup.industry} ({startup.location})
+                    {startup.name} - {startup.founder_name} ({startup.industry}, {startup.location})
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -958,6 +1098,75 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
               </div>
               <Button onClick={handleUpdateTracking} className="w-full">
                 Update Tracking
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Profile Edit Dialog */}
+        <Dialog open={isProfileDialogOpen} onOpenChange={setIsProfileDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Edit Profile</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="profile-name">Name</Label>
+                <Input
+                  id="profile-name"
+                  value={profileForm.name}
+                  onChange={(e) => setProfileForm({...profileForm, name: e.target.value})}
+                  placeholder="Your full name"
+                />
+              </div>
+              
+              {/* Photo Upload Section */}
+              <div>
+                <Label htmlFor="profile-photo">Profile Photo</Label>
+                <div className="flex items-center space-x-4 mt-2">
+                  {/* Photo Preview */}
+                  <div className="flex-shrink-0">
+                    {photoPreview ? (
+                      <img 
+                        src={photoPreview} 
+                        alt="Profile preview"
+                        className="w-20 h-20 rounded-full object-cover border-2 border-[#5d248f]"
+                      />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full bg-gray-200 flex items-center justify-center text-gray-400 text-2xl font-bold">
+                        {profileForm.name?.charAt(0)?.toUpperCase() || '?'}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Upload Button */}
+                  <div className="flex-1">
+                    <Input
+                      id="profile-photo"
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoChange}
+                      className="cursor-pointer"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Upload your profile photo (JPG, PNG, GIF, WEBP)</p>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="profile-calendly">Calendly Link</Label>
+                <Input
+                  id="profile-calendly"
+                  value={profileForm.calendly_link}
+                  onChange={(e) => setProfileForm({...profileForm, calendly_link: e.target.value})}
+                  placeholder="https://calendly.com/your-link"
+                />
+                <p className="text-xs text-gray-500 mt-1">Your Calendly scheduling link</p>
+              </div>
+              <Button 
+                onClick={handleProfileUpdate} 
+                className="w-full bg-[#5d248f] hover:bg-[#4a1d73]"
+              >
+                Save Profile
               </Button>
             </div>
           </DialogContent>
