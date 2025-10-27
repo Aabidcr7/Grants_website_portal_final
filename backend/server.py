@@ -44,7 +44,10 @@ GRANT_MATCHES_CSV = DATA_DIR / 'grant_matches.csv'
 STARTUP_ASSIGNMENTS_CSV = DATA_DIR / 'startup_assignments.csv'
 
 # OpenAI setup
-openai.api_key = os.environ.get('OPENAI_API_KEY', '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')
+openai.api_key = os.environ.get('OPENAI_API_KEY')
+if not openai.api_key:
+    print("⚠️  WARNING: OPENAI_API_KEY environment variable not set. AI matching will not work.")
+    print("   Set the environment variable: export OPENAI_API_KEY='your-api-key-here'")
 
 # JWT Secret
 JWT_SECRET = os.environ.get('JWT_SECRET', 'myprobuddy_secret_key_2025')
