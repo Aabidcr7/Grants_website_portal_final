@@ -7,12 +7,13 @@ import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Progress } from '../components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Award, LogOut, Crown, Sparkles, ExternalLink, Calendar, BadgeCheck, Gift, TrendingUp, DollarSign, FileText, Search, Bell, Download, Users, Target, BarChart3, Clock, CheckCircle2, Zap, MessageSquare, Video, XCircle } from 'lucide-react';
+import { Award, LogOut, Crown, Sparkles, ExternalLink, Calendar, BadgeCheck, Gift, TrendingUp, DollarSign, FileText, Search, Bell, Download, Users, Target, BarChart3, Clock, CheckCircle2, Zap, MessageSquare, Video, XCircle, RefreshCw } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import VentureAnalystDashboard from './VentureAnalystDashboard';
 import AdminDashboard from './AdminDashboard';
 import IncubationAdminDashboard from './IncubationAdminDashboard';
+import UserProfile from '../components/UserProfile';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 const API = `${BACKEND_URL}/api`;
@@ -796,8 +797,11 @@ const PremiumTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleL
                     <span>Deadline: {grant.deadline}</span>
                   </div>
                   <div className="flex space-x-2 pt-2">
-                    <Button size="sm" className="bg-[#5d248f] hover:bg-[#4a1d73] w-full" onClick={() => window.open(grant.application_link, '_blank')} data-testid={`apply-btn-${idx}`}>
+                    <Button size="sm" className="bg-[#5d248f] hover:bg-[#4a1d73] px-3" onClick={() => window.open(grant.application_link, '_blank')} data-testid={`apply-btn-${idx}`}>
                       <ExternalLink className="w-3 h-3 mr-1" /> Apply
+                    </Button>
+                    <Button size="sm" variant="outline" data-testid={`expert-help-${idx}`} onClick={() => handleRequestExpertHelp(grant)}>
+                      <MessageSquare className="w-4 h-4 mr-2" /> Request Expert Help
                     </Button>
                   </div>
                 </div>
@@ -913,6 +917,82 @@ const ExpertTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLo
   const [activeTab, setActiveTab] = useState('grants');
   const [trackingData, setTrackingData] = useState([]);
   const [trackingLoading, setTrackingLoading] = useState(false);
+  const [profileData, setProfileData] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [kpiData, setKpiData] = useState({
+    totalGrants: 0,
+    softApprovals: 0,
+    inProgress: 0,
+    consultations: 0,
+    avgMatch: 0,
+    applied: 0,
+    approved: 0,
+    disbursed: 0
+  });
+  const [kpiLoading, setKpiLoading] = useState(false);
+
+  // Load profile data to get assigned team members
+  const loadProfileData = async () => {
+    try {
+      setProfileLoading(true);
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${API}/auth/profile-complete`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setProfileData(response.data);
+    } catch (error) {
+      console.error('Error loading profile data:', error);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  // Calculate KPI data
+  const calculateKPIs = async () => {
+    setKpiLoading(true);
+    try {
+      const totalGrants = grants ? grants.length : 0;
+      const softApprovals = grants ? grants.filter(g => g.soft_approval === 'Yes').length : 0;
+      const inProgress = trackingData ? trackingData.filter(t => t.status === 'Applied' || t.status === 'Draft').length : 0;
+      const consultations = profileData && profileData.assignments ? profileData.assignments.filter(a => a.assigned_to_type === 'venture_analyst').length : 0;
+      const avgMatch = grants && grants.length > 0 ? 
+        Math.round(grants.reduce((acc, g) => acc + (parseFloat(g.relevance_score) || 0), 0) / grants.length) : 0;
+      const applied = trackingData ? trackingData.filter(t => t.status === 'Applied').length : 0;
+      const approved = trackingData ? trackingData.filter(t => t.status === 'Approved').length : 0;
+      const disbursed = trackingData ? trackingData.filter(t => t.status === 'Disbursed').length : 0;
+
+      setKpiData({
+        totalGrants,
+        softApprovals,
+        inProgress,
+        consultations,
+        avgMatch,
+        applied,
+        approved,
+        disbursed
+      });
+    } finally {
+      setKpiLoading(false);
+    }
+  };
+
+  // Refresh all KPI data
+  const refreshKPIs = async () => {
+    await loadTrackingData();
+    await loadProfileData();
+    await calculateKPIs();
+    toast.success('KPIs refreshed successfully!');
+  };
+
+  // Load KPI data when grants or tracking data changes
+  useEffect(() => {
+    calculateKPIs();
+  }, [grants, trackingData, profileData]);
+
+  // Load tracking data on component mount
+  useEffect(() => {
+    loadTrackingData();
+  }, []);
 
   // Load tracking data for expert's startup
   const loadTrackingData = async () => {
@@ -964,6 +1044,104 @@ const ExpertTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLo
     }
   }, [activeTab, user]);
 
+  // Load profile data when consultation tab is selected
+  useEffect(() => {
+    if (activeTab === 'consultation' && user) {
+      loadProfileData();
+    }
+  }, [activeTab, user]);
+
+  // Get assigned venture analyst
+  const getAssignedVentureAnalyst = () => {
+    if (!profileData || !profileData.assignments) return null;
+    return profileData.assignments.find(assignment => assignment.assigned_to_type === 'venture_analyst');
+  };
+
+  // Resolve media/photo URL to absolute if backend returned a relative path
+  const resolvePhotoUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${BACKEND_URL}${url}`;
+  };
+
+  // Handle callback request notification
+  const handleCallbackRequest = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const ventureAnalyst = getAssignedVentureAnalyst();
+      
+      if (!ventureAnalyst) {
+        toast.error('No venture analyst assigned yet');
+        return;
+      }
+
+      // Send notification to venture analyst
+      await axios.post(`${API}/notifications/send`, {
+        to_user_id: ventureAnalyst.assigned_to_id,
+        type: 'callback_request',
+        title: 'Callback Request',
+        message: `${user.name} has requested a callback for consultation`,
+        data: {
+          from_user_id: user.id,
+          from_user_name: user.name,
+          from_user_email: user.email
+        }
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      toast.success('Callback request sent to your venture analyst!');
+    } catch (error) {
+      console.error('Error sending callback request:', error);
+      toast.error('Failed to send callback request');
+    }
+  };
+
+  // Handle expert help request notification (from grants list)
+  const handleRequestExpertHelp = async (grant) => {
+    try {
+      const token = localStorage.getItem('token');
+      let ventureAnalyst = getAssignedVentureAnalyst();
+
+      // If profile/assignments not loaded yet, fetch them on-demand
+      if (!ventureAnalyst) {
+        const response = await axios.get(`${API}/auth/profile-complete`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setProfileData(response.data);
+        if (response.data?.assignments) {
+          ventureAnalyst = response.data.assignments.find(a => a.assigned_to_type === 'venture_analyst');
+        }
+      }
+
+      if (!ventureAnalyst) {
+        toast.error('No venture analyst assigned yet');
+        return;
+      }
+
+      await axios.post(`${API}/notifications/send`, {
+        to_user_id: ventureAnalyst.assigned_to_id,
+        type: 'expert_help_request',
+        title: 'Expert Help Requested',
+        message: `${user.name} requested expert help for: ${grant.name}`,
+        data: {
+          grant_id: grant['Grant ID'] || grant.id,
+          grant_name: grant.name,
+          startup_user_id: user.id,
+          startup_user_name: user.name,
+          startup_user_email: user.email
+        }
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      toast.success('Request sent to your venture analyst!');
+    } catch (error) {
+      console.error('Error sending expert help request:', error);
+      toast.error('Failed to send request');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-indigo-50">
       {/* Header */}
@@ -983,6 +1161,7 @@ const ExpertTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLo
                 <span>Expert</span>
               </Badge>
               <span className="font-medium" data-testid="user-name">{user?.name}</span>
+              <UserProfile user={user} />
               <Button variant="ghost" size="sm" className="text-white hover:bg-white/20" onClick={handleLogout} data-testid="logout-btn">
                 <LogOut className="w-4 h-4 mr-2" /> Logout
               </Button>
@@ -999,51 +1178,150 @@ const ExpertTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLo
         </div>
 
         {/* Key Metrics */}
-        <div className="grid md:grid-cols-5 gap-6 mb-8">
+        <div className="mb-4 flex justify-between items-center">
+          <h3 className="text-lg font-semibold text-gray-800">Key Performance Indicators</h3>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={refreshKPIs}
+            disabled={kpiLoading}
+            className="hover:bg-[#5d248f] hover:text-white hover:border-[#5d248f] transition-colors"
+          >
+            {kpiLoading ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2"></div>
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            Refresh KPIs
+          </Button>
+        </div>
+        <div className="grid md:grid-cols-4 gap-6 mb-8">
           <Card className="card bg-gradient-to-br from-[#5d248f] to-[#4a1d73] text-white shadow-lg border-0" style={{background: 'linear-gradient(135deg, #5d248f 0%, #4a1d73 100%)'}}>
             <CardContent className="pt-6 text-center">
               <Target className="w-10 h-10 mx-auto mb-2 text-white" />
-              <p className="text-2xl font-bold text-white">{(grants || []).length}</p>
-              <p className="text-sm text-white">Total Grants</p>
+              {kpiLoading ? (
+                <div className="animate-pulse">
+                  <div className="h-8 bg-white/30 rounded mb-2"></div>
+                  <div className="h-4 bg-white/20 rounded w-20 mx-auto"></div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-white">{kpiData.totalGrants}</p>
+                  <p className="text-sm text-white">Total Grants</p>
+                </>
+              )}
             </CardContent>
           </Card>
 
           <Card className="card">
             <CardContent className="pt-6 text-center">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500" />
-              <p className="text-2xl font-bold text-green-600">{(grants || []).filter(g => g.soft_approval === 'Yes').length}</p>
-              <p className="text-sm text-gray-600">Soft Approvals</p>
+              {kpiLoading ? (
+                <div className="animate-pulse">
+                  <div className="h-8 bg-gray-300 rounded mb-2"></div>
+                  <div className="h-4 bg-gray-200 rounded w-24 mx-auto"></div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-green-600">{kpiData.softApprovals}</p>
+                  <p className="text-sm text-gray-600">Soft Approvals</p>
+                </>
+              )}
             </CardContent>
           </Card>
 
           <Card className="card">
             <CardContent className="pt-6 text-center">
               <Clock className="w-10 h-10 mx-auto mb-2 text-[#f46d19]" />
-              <p className="text-2xl font-bold text-[#f46d19]">5</p>
-              <p className="text-sm text-gray-600">In Progress</p>
-            </CardContent>
-          </Card>
-
-          <Card className="card">
-            <CardContent className="pt-6 text-center">
-              <MessageSquare className="w-10 h-10 mx-auto mb-2 text-blue-500" />
-              <p className="text-2xl font-bold text-blue-600">3</p>
-              <p className="text-sm text-gray-600">Consultations</p>
+              {kpiLoading ? (
+                <div className="animate-pulse">
+                  <div className="h-8 bg-gray-300 rounded mb-2"></div>
+                  <div className="h-4 bg-gray-200 rounded w-20 mx-auto"></div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-[#f46d19]">{kpiData.inProgress}</p>
+                  <p className="text-sm text-gray-600">In Progress</p>
+                </>
+              )}
             </CardContent>
           </Card>
 
           <Card className="card">
             <CardContent className="pt-6 text-center">
               <TrendingUp className="w-10 h-10 mx-auto mb-2 text-[#5d248f]" />
-              <p className="text-2xl font-bold text-[#5d248f]">{(grants || []).length > 0 ? Math.round((grants || []).reduce((acc, g) => acc + (g.relevance_score || 0), 0) / (grants || []).length) : 0}%</p>
-              <p className="text-sm text-gray-600">Avg Match</p>
+              {kpiLoading ? (
+                <div className="animate-pulse">
+                  <div className="h-8 bg-gray-300 rounded mb-2"></div>
+                  <div className="h-4 bg-gray-200 rounded w-20 mx-auto"></div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-[#5d248f]">{kpiData.avgMatch}%</p>
+                  <p className="text-sm text-gray-600">Avg Match</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Application Status KPIs */}
+        <div className="grid md:grid-cols-3 gap-6 mb-8">
+          <Card className="card">
+            <CardContent className="pt-6 text-center">
+              <Clock className="w-10 h-10 mx-auto mb-2 text-blue-500" />
+              {kpiLoading ? (
+                <div className="animate-pulse">
+                  <div className="h-8 bg-gray-300 rounded mb-2"></div>
+                  <div className="h-4 bg-gray-200 rounded w-24 mx-auto"></div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-blue-600">{kpiData.applied}</p>
+                  <p className="text-sm text-gray-600">Applied</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="card">
+            <CardContent className="pt-6 text-center">
+              <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-600" />
+              {kpiLoading ? (
+                <div className="animate-pulse">
+                  <div className="h-8 bg-gray-300 rounded mb-2"></div>
+                  <div className="h-4 bg-gray-200 rounded w-24 mx-auto"></div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-green-700">{kpiData.approved}</p>
+                  <p className="text-sm text-gray-600">Approved</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="card">
+            <CardContent className="pt-6 text-center">
+              <DollarSign className="w-10 h-10 mx-auto mb-2 text-purple-600" />
+              {kpiLoading ? (
+                <div className="animate-pulse">
+                  <div className="h-8 bg-gray-300 rounded mb-2"></div>
+                  <div className="h-4 bg-gray-200 rounded w-24 mx-auto"></div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-purple-700">{kpiData.disbursed}</p>
+                  <p className="text-sm text-gray-600">Disbursed</p>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
 
         {/* Tabs Section */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 bg-white shadow-sm p-1 rounded-lg">
+          <TabsList className="grid w-full grid-cols-3 bg-white shadow-sm p-1 rounded-lg">
             <TabsTrigger value="grants" className="data-[state=active]:bg-[#5d248f] data-[state=active]:text-white" data-testid="grants-tab">
               <Target className="w-4 h-4 mr-2" /> Grants
             </TabsTrigger>
@@ -1052,9 +1330,6 @@ const ExpertTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLo
             </TabsTrigger>
             <TabsTrigger value="consultation" className="data-[state=active]:bg-[#5d248f] data-[state=active]:text-white" data-testid="consultation-tab">
               <Video className="w-4 h-4 mr-2" /> Consultation
-            </TabsTrigger>
-            <TabsTrigger value="crm" className="data-[state=active]:bg-[#5d248f] data-[state=active]:text-white" data-testid="crm-tab">
-              <Users className="w-4 h-4 mr-2" /> CRM
             </TabsTrigger>
           </TabsList>
 
@@ -1127,13 +1402,10 @@ const ExpertTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLo
                         <p className="text-gray-600 text-sm">{grant.eligibility}</p>
                       </div>
                       <div className="flex space-x-2">
-                        <Button size="sm" className="bg-[#5d248f] hover:bg-[#4a1d73]" onClick={() => window.open(grant.application_link, '_blank')} data-testid={`apply-btn-${idx}`}>
-                          <ExternalLink className="w-4 h-4 mr-2" /> Apply Now
+                        <Button size="sm" className="bg-[#5d248f] hover:bg-[#4a1d73] px-3" onClick={() => window.open(grant.application_link, '_blank')} data-testid={`apply-btn-${idx}`}>
+                          <ExternalLink className="w-3 h-3 mr-1" /> Apply
                         </Button>
-                        <Button size="sm" variant="outline" data-testid={`track-btn-${idx}`}>
-                          <Target className="w-4 h-4 mr-2" /> Add to Tracking
-                        </Button>
-                        <Button size="sm" variant="outline" data-testid={`expert-help-${idx}`}>
+                        <Button size="sm" variant="outline" data-testid={`expert-help-${idx}`} onClick={() => handleRequestExpertHelp(grant)}>
                           <MessageSquare className="w-4 h-4 mr-2" /> Request Expert Help
                         </Button>
                       </div>
@@ -1329,131 +1601,183 @@ const ExpertTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLo
           {/* Consultation Tab */}
           <TabsContent value="consultation" className="space-y-6">
             <div className="grid md:grid-cols-2 gap-6">
-              <Card className="card">
+              <Card className="card shadow-lg border border-gray-200">
                 <CardHeader>
                   <CardTitle>Schedule Expert Consultation</CardTitle>
-                  <CardDescription>Book a 1-on-1 session with grant experts</CardDescription>
+                  <CardDescription>Book a 1-on-1 session with your assigned venture analyst</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <Button className="w-full bg-[#5d248f] hover:bg-[#4a1d73]" data-testid="schedule-consultation-btn">
-                    <Video className="w-4 h-4 mr-2" /> Book Video Call
-                  </Button>
-                  <Button variant="outline" className="w-full" data-testid="request-callback-btn">
-                    <MessageSquare className="w-4 h-4 mr-2" /> Request Callback
-                  </Button>
+                  {profileLoading ? (
+                    <div className="text-center py-4">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#5d248f] mx-auto"></div>
+                      <p className="mt-2 text-sm text-gray-600">Loading team information...</p>
+                    </div>
+                  ) : getAssignedVentureAnalyst() ? (
+                    <>
+                      <Button 
+                        className="w-full bg-[#5d248f] hover:bg-[#4a1d73]" 
+                        data-testid="schedule-consultation-btn"
+                        onClick={() => {
+                          const analyst = getAssignedVentureAnalyst();
+                          if (analyst.assigned_to_calendly_link) {
+                            window.open(analyst.assigned_to_calendly_link, '_blank');
+                          } else {
+                            toast.error('Calendly link not available for your venture analyst');
+                          }
+                        }}
+                      >
+                        <Video className="w-4 h-4 mr-2" /> Book Video Call
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        className="w-full" 
+                        data-testid="request-callback-btn"
+                        onClick={handleCallbackRequest}
+                      >
+                        <MessageSquare className="w-4 h-4 mr-2" /> Request Callback
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="text-center py-4">
+                      <p className="text-gray-600 mb-4">No venture analyst assigned yet</p>
+                      <p className="text-sm text-gray-500">Your venture analyst will be assigned by the system administrator</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
-              <Card className="card bg-gradient-to-br from-[#5d248f] to-[#4a1d73] text-white">
+              <Card className="card bg-gradient-to-br from-[#5d248f] to-[#4a1d73] text-white shadow-xl border-0" style={{background: 'linear-gradient(135deg, #5d248f 0%, #4a1d73 100%)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'}}>
                 <CardHeader>
                   <CardTitle className="text-white">Your Expert Team</CardTitle>
                   <CardDescription className="text-white/80">Dedicated support for 3 months</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                      <Users className="w-5 h-5" />
+                  {profileLoading ? (
+                    <div className="text-center py-4">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mx-auto"></div>
+                      <p className="mt-2 text-sm text-white/80">Loading team...</p>
                     </div>
-                    <div>
-                      <p className="font-semibold">Grant Specialist</p>
-                      <p className="text-sm opacity-80">Application guidance</p>
+                  ) : getAssignedVentureAnalyst() ? (
+                    <div className="space-y-4">
+                      {/* Assigned Venture Analyst */}
+                      <div className="flex items-center space-x-4 p-6 bg-white/25 rounded-xl border-2 border-white/40 shadow-lg">
+                        <div className="w-16 h-16 rounded-full border-2 border-white/60 shadow-md overflow-hidden">
+                          {getAssignedVentureAnalyst().assigned_to_photo_url ? (
+                            <img 
+                              src={resolvePhotoUrl(getAssignedVentureAnalyst().assigned_to_photo_url)} 
+                              alt={getAssignedVentureAnalyst().assigned_to_name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                e.target.nextSibling.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          <div className={`w-full h-full bg-white/40 flex items-center justify-center ${getAssignedVentureAnalyst().assigned_to_photo_url ? 'hidden' : 'flex'}`}>
+                            <Users className="w-8 h-8 text-white" />
+                          </div>
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="text-lg font-bold text-white mb-1">{getAssignedVentureAnalyst().assigned_to_name}</h3>
+                          <p className="text-base text-white/90 font-medium mb-1">Venture Analyst</p>
+                          <p className="text-sm text-white/70">{getAssignedVentureAnalyst().assigned_to_email}</p>
+                          {getAssignedVentureAnalyst().assigned_to_calendly_link && (
+                            <p className="text-xs text-white/60 mt-1">✓ Calendly Available</p>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                      <FileText className="w-5 h-5" />
+                  ) : (
+                    <div className="text-center py-8">
+                      <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Users className="w-8 h-8 text-white/60" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-white mb-2">No Team Assigned Yet</h3>
+                      <p className="text-white/80">Your dedicated venture analyst will be assigned soon</p>
                     </div>
-                    <div>
-                      <p className="font-semibold">Document Expert</p>
-                      <p className="text-sm opacity-80">Proposal writing support</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                      <CheckCircle2 className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="font-semibold">Success Manager</p>
-                      <p className="text-sm opacity-80">End-to-end tracking</p>
-                    </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
 
             <Card>
               <CardHeader>
-                <CardTitle>Upcoming Sessions</CardTitle>
+                <CardTitle>Recent Activity & Notifications</CardTitle>
+                <CardDescription>Stay updated with your grant application progress</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <Calendar className="w-5 h-5 text-[#5d248f]" />
-                      <div>
-                        <p className="font-semibold">Grant Application Review</p>
-                        <p className="text-sm text-gray-600">Tomorrow, 10:00 AM</p>
-                      </div>
+                <div className="space-y-4">
+                  {/* Dynamic content based on tracking data */}
+                  {trackingData.length > 0 ? (
+                    <div className="space-y-3">
+                      <h4 className="font-semibold text-gray-700 mb-3">Recent Grant Applications</h4>
+                      {trackingData.slice(0, 3).map((tracking) => (
+                        <div key={tracking.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                              tracking.status === 'Applied' ? 'bg-blue-100 text-blue-600' :
+                              tracking.status === 'Approved' ? 'bg-green-100 text-green-600' :
+                              tracking.status === 'Disbursed' ? 'bg-purple-100 text-purple-600' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>
+                              {tracking.status === 'Applied' ? <Clock className="w-4 h-4" /> :
+                               tracking.status === 'Approved' ? <CheckCircle2 className="w-4 h-4" /> :
+                               tracking.status === 'Disbursed' ? <DollarSign className="w-4 h-4" /> :
+                               <FileText className="w-4 h-4" />}
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">{tracking.grant_name}</p>
+                              <p className="text-xs text-gray-500">Status: {tracking.status}</p>
+                            </div>
+                          </div>
+                          <Badge className={
+                            tracking.status === 'Applied' ? 'bg-blue-100 text-blue-700' :
+                            tracking.status === 'Approved' ? 'bg-green-100 text-green-700' :
+                            tracking.status === 'Disbursed' ? 'bg-purple-100 text-purple-700' :
+                            'bg-gray-100 text-gray-700'
+                          }>
+                            {tracking.status}
+                          </Badge>
+                        </div>
+                      ))}
                     </div>
-                    <Button size="sm" variant="outline">Join Call</Button>
-                  </div>
-                  <div className="text-center py-8 text-gray-500">
-                    <p>No more scheduled sessions</p>
-                    <Button className="mt-4 bg-[#5d248f] hover:bg-[#4a1d73]">Schedule New Session</Button>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <Target className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p>No grant applications yet</p>
+                      <p className="text-sm mt-2">Your venture analyst will create tracking entries for your grants</p>
+                    </div>
+                  )}
+                  
+                  {/* Quick Actions */}
+                  <div className="border-t pt-4">
+                    <h4 className="font-semibold text-gray-700 mb-3">Quick Actions</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="justify-start hover:bg-[#5d248f] hover:text-white hover:border-[#5d248f] transition-colors"
+                        onClick={() => setActiveTab('grants')}
+                      >
+                        <FileText className="w-4 h-4 mr-2" />
+                        View All Grants
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="justify-start hover:bg-[#5d248f] hover:text-white hover:border-[#5d248f] transition-colors"
+                        onClick={() => setActiveTab('tracking')}
+                      >
+                        <BarChart3 className="w-4 h-4 mr-2" />
+                        View Progress
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* CRM Tab */}
-          <TabsContent value="crm" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Grant Management CRM</CardTitle>
-                <CardDescription>Comprehensive tools to manage your grant pipeline</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid md:grid-cols-3 gap-6">
-                  <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
-                    <CardContent className="pt-6 text-center">
-                      <Target className="w-12 h-12 text-blue-600 mx-auto mb-3" />
-                      <p className="text-2xl font-bold text-blue-700">12</p>
-                      <p className="text-sm text-blue-600">Active Opportunities</p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="bg-gradient-to-br from-yellow-50 to-yellow-100 border-yellow-200">
-                    <CardContent className="pt-6 text-center">
-                      <Clock className="w-12 h-12 text-yellow-600 mx-auto mb-3" />
-                      <p className="text-2xl font-bold text-yellow-700">5</p>
-                      <p className="text-sm text-yellow-600">Pending Actions</p>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-                    <CardContent className="pt-6 text-center">
-                      <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-3" />
-                      <p className="text-2xl font-bold text-green-700">3</p>
-                      <p className="text-sm text-green-600">Completed</p>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                <div className="mt-6 space-y-3">
-                  <Button variant="outline" className="w-full justify-start">
-                    <FileText className="w-4 h-4 mr-2" /> Document Repository
-                  </Button>
-                  <Button variant="outline" className="w-full justify-start">
-                    <BarChart3 className="w-4 h-4 mr-2" /> Analytics & Reports
-                  </Button>
-                  <Button variant="outline" className="w-full justify-start">
-                    <Bell className="w-4 h-4 mr-2" /> Notification Settings
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
         </Tabs>
       </div>
     </div>

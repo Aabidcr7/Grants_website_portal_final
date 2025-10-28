@@ -17,6 +17,7 @@ import pandas as pd
 import openai
 import json
 import shutil
+import math
 from contextlib import asynccontextmanager
 from fastapi.responses import FileResponse
 from reportlab.lib.pagesizes import letter, A4
@@ -37,6 +38,7 @@ SOFT_APPROVAL_CSV = DATA_DIR / 'soft_approval.csv'
 COUPONS_CSV = DATA_DIR / 'coupons.csv'
 STARTUPS_CSV = DATA_DIR / 'startups.csv'
 GRANT_TRACKING_CSV = DATA_DIR / 'grant_tracking.csv'
+NOTIFICATIONS_CSV = DATA_DIR / 'notifications.csv'
 
 # CSV Storage Configuration
 USERS_CSV = DATA_DIR / 'users.csv'
@@ -108,6 +110,18 @@ def load_startup_assignments_df():
 def save_startup_assignments_df(df):
     """Save startup assignments to CSV file"""
     df.to_csv(STARTUP_ASSIGNMENTS_CSV, index=False)
+
+def load_notifications_df():
+    """Load notifications from CSV file"""
+    if NOTIFICATIONS_CSV.exists():
+        return pd.read_csv(NOTIFICATIONS_CSV)
+    return pd.DataFrame(columns=[
+        'id', 'to_user_id', 'from_user_id', 'type', 'title', 'message', 'data', 'created_at', 'read'
+    ])
+
+def save_notifications_df(df):
+    """Save notifications to CSV file"""
+    df.to_csv(NOTIFICATIONS_CSV, index=False)
 
 def sync_user_tier_to_startup(user_email: str, new_tier: str):
     """Sync user tier from users.csv to startups.csv - ensures both files stay in sync"""
@@ -346,18 +360,74 @@ class IncubationUserRegister(BaseModel):
     password: str
     link_code: str
 
+# Custom JSON encoder to handle NaN values
+class SafeJSONEncoder(json.JSONEncoder):
+    def encode(self, obj):
+        return super().encode(self._clean_for_json(obj))
+    
+    def _clean_for_json(self, obj):
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, bool)):
+            return obj
+        elif isinstance(obj, float):
+            if pd.isna(obj) or obj != obj or math.isnan(obj):  # Check for NaN
+                return None
+            return obj
+        elif isinstance(obj, dict):
+            return {key: self._clean_for_json(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._clean_for_json(item) for item in obj]
+        elif hasattr(obj, 'item'):  # numpy scalar
+            result = obj.item()
+            return self._clean_for_json(result)
+        elif hasattr(obj, 'tolist'):  # numpy array
+            return self._clean_for_json(obj.tolist())
+        else:
+            return str(obj)
+
 # Helper functions
 def convert_numpy_types(obj):
     """Convert numpy types to Python native types for JSON serialization"""
     if hasattr(obj, 'item'):  # numpy scalar
-        return obj.item()
+        result = obj.item()
+        if isinstance(result, float) and (pd.isna(result) or result != result):  # Check for NaN
+            return None
+        return result
     elif hasattr(obj, 'tolist'):  # numpy array
         return obj.tolist()
     elif isinstance(obj, dict):
         return {key: convert_numpy_types(value) for key, value in obj.items()}
     elif isinstance(obj, list):
         return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, float) and (pd.isna(obj) or obj != obj):  # Check for NaN
+        return None
+    elif pd.isna(obj):  # Handle pandas NaN
+        return None
     return obj
+
+def clean_for_json(obj):
+    """Recursively clean data for JSON serialization"""
+    if obj is None:
+        return None
+    elif isinstance(obj, (str, int, bool)):
+        return obj
+    elif isinstance(obj, float):
+        if pd.isna(obj) or obj != obj:  # Check for NaN
+            return None
+        return obj
+    elif isinstance(obj, dict):
+        return {key: clean_for_json(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_for_json(item) for item in obj]
+    elif hasattr(obj, 'item'):  # numpy scalar
+        result = obj.item()
+        return clean_for_json(result)
+    elif hasattr(obj, 'tolist'):  # numpy array
+        return clean_for_json(obj.tolist())
+    else:
+        # Convert to string as fallback
+        return str(obj)
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -755,6 +825,217 @@ async def upload_profile_photo(file: UploadFile = File(...), user: dict = Depend
     except Exception as e:
         logging.error(f"Error uploading photo: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to upload photo: {str(e)}")
+
+@api_router.get("/auth/profile-simple")
+async def get_simple_profile(user: dict = Depends(get_current_user)):
+    """Simple profile endpoint for testing"""
+    try:
+        return {
+            "user": {
+                "id": str(user['id']),
+                "name": str(user['name']),
+                "email": str(user['email']),
+                "tier": str(user['tier'])
+            },
+            "message": "Profile loaded successfully"
+        }
+    except Exception as e:
+        logging.error(f"Error in simple profile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get profile data")
+
+@api_router.get("/auth/profile-complete")
+async def get_complete_profile(user: dict = Depends(get_current_user)):
+    """Get complete user profile including screening data, tier, and assignments"""
+    try:
+        users_df = load_users_df()
+        startups_df = load_startups_df()
+        assignments_df = load_startup_assignments_df()
+        
+        # Get user data
+        user_row = users_df[users_df['id'] == user['id']]
+        if user_row.empty:
+            raise HTTPException(status_code=404, detail="User not found")
+        user_data = user_row.iloc[0]
+        
+        # Parse profile data from JSON string
+        profile_data = {}
+        if pd.notna(user_data.get('profile')) and user_data['profile']:
+            try:
+                profile_data = json.loads(user_data['profile'])
+                # Ensure profile_data is a dict
+                if not isinstance(profile_data, dict):
+                    profile_data = {}
+            except (json.JSONDecodeError, TypeError):
+                profile_data = {}
+        
+        # Get startup data - simplified approach
+        startup_data = None
+        if not startups_df.empty:
+            user_startup = startups_df[startups_df['Email'] == user['email']]
+            if not user_startup.empty:
+                startup_row = user_startup.iloc[0]
+                startup_data = {
+                    'ID': str(startup_row.get('ID', '')),
+                    'Name': str(startup_row.get('Name', '')),
+                    'Founder Name': str(startup_row.get('Founder Name', '')),
+                    'Entity Type': str(startup_row.get('Entity Type', '')),
+                    'Location': str(startup_row.get('Location', '')),
+                    'Industry': str(startup_row.get('Industry', '')),
+                    'Company Size': str(startup_row.get('Company Size', '')),
+                    'Description': str(startup_row.get('Description', '')),
+                    'Contact Email': str(startup_row.get('Contact Email', '')),
+                    'Contact Phone': str(startup_row.get('Contact Phone', '')),
+                    'Stage': str(startup_row.get('Stage', '')),
+                    'Revenue': str(startup_row.get('Revenue', '')),
+                    'Stability': str(startup_row.get('Stability', '')),
+                    'Demographic': str(startup_row.get('Demographic', '')),
+                    'Track Record': str(startup_row.get('Track Record', '')),
+                    'Past Grant Experience': str(startup_row.get('Past Grant Experience', '')),
+                    'Tier': str(startup_row.get('Tier', ''))
+                }
+        
+        # Get assignments - simplified approach
+        assignments = []
+        if not assignments_df.empty and startup_data:
+            startup_id = startup_data.get('ID')
+            if startup_id:
+                user_assignments = assignments_df[assignments_df['startup_id'] == startup_id]
+                for _, assignment in user_assignments.iterrows():
+                    assigned_to_id = str(assignment['assigned_to_id'])
+                    assigned_to_type = str(assignment['assigned_to_type'])
+                    
+                    # Get assigned person's details
+                    assigned_person = users_df[users_df['id'] == assigned_to_id]
+                    if not assigned_person.empty:
+                        person_data = assigned_person.iloc[0]
+                        assignments.append({
+                            'id': str(assignment['id']),
+                            'assigned_to_id': assigned_to_id,
+                            'assigned_to_type': assigned_to_type,
+                            'assigned_to_name': str(person_data['name']),
+                            'assigned_to_email': str(person_data['email']),
+                            'assigned_to_photo_url': str(person_data.get('photo_url', '')),
+                            'assigned_to_calendly_link': str(person_data.get('calendly_link', '')),
+                            'assigned_at': str(assignment['assigned_at']),
+                            'assigned_by': str(assignment['assigned_by'])
+                        })
+        
+        # Simple response data
+        response_data = {
+            "user": {
+                "id": str(user_data['id']),
+                "name": str(user_data['name']),
+                "email": str(user_data['email']),
+                "tier": str(user_data['tier']),
+                "has_completed_screening": bool(user_data.get('has_completed_screening', False)),
+                "photo_url": str(user_data.get('photo_url', '')),
+                "calendly_link": str(user_data.get('calendly_link', '')),
+                "created_at": str(user_data.get('created_at', '')),
+                "screening_completed_at": str(user_data.get('screening_completed_at', '')),
+                "upgraded_at": str(user_data.get('upgraded_at', '')),
+                "coupon_used": str(user_data.get('coupon_used', ''))
+            },
+            "screening_data": profile_data,
+            "startup_data": startup_data,
+            "assignments": assignments
+        }
+        
+        return response_data
+    
+    except Exception as e:
+        logging.error(f"Error getting complete profile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get profile data")
+
+@api_router.post("/notifications/send")
+async def send_notification(notification_data: dict, user: dict = Depends(get_current_user)):
+    """Send notification to another user and persist it"""
+    try:
+        required_fields = ['to_user_id', 'type', 'title', 'message']
+        for field in required_fields:
+            if field not in notification_data:
+                raise HTTPException(status_code=400, detail=f"Missing field: {field}")
+
+        notifications_df = load_notifications_df()
+        notif_id = str(uuid.uuid4())
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        new_row = {
+            'id': notif_id,
+            'to_user_id': str(notification_data['to_user_id']),
+            'from_user_id': str(user['id']),
+            'type': str(notification_data.get('type', 'generic')),
+            'title': str(notification_data.get('title', '')),
+            'message': str(notification_data.get('message', '')),
+            'data': json.dumps(notification_data.get('data', {})),
+            'created_at': created_at,
+            'read': False,
+        }
+
+        notifications_df = pd.concat([notifications_df, pd.DataFrame([new_row])], ignore_index=True)
+        save_notifications_df(notifications_df)
+
+        logging.info(f"Notification saved: {notif_id} -> {new_row['to_user_id']}")
+
+        return {
+            "message": "Notification sent successfully",
+            "notification": new_row
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error sending notification: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send notification")
+
+@api_router.get("/notifications/my")
+async def list_my_notifications(user: dict = Depends(get_current_user)):
+    """List notifications for the current user"""
+    try:
+        notifications_df = load_notifications_df()
+        if notifications_df.empty:
+            return {"notifications": []}
+
+        my_notifs = notifications_df[notifications_df['to_user_id'] == str(user['id'])]
+        notifs = []
+        for _, row in my_notifs.sort_values(by='created_at', ascending=False).iterrows():
+            notifs.append({
+                'id': str(row['id']),
+                'type': str(row['type']),
+                'title': str(row['title']),
+                'message': str(row['message']),
+                'data': json.loads(row['data']) if pd.notna(row['data']) and str(row['data']).strip() else {},
+                'created_at': str(row['created_at']),
+                'read': bool(row['read']) if pd.notna(row['read']) else False,
+            })
+        return {"notifications": notifs}
+    except Exception as e:
+        logging.error(f"Error listing notifications: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list notifications")
+
+@api_router.post("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, user: dict = Depends(get_current_user)):
+    """Mark a notification as read"""
+    try:
+        notifications_df = load_notifications_df()
+        if notifications_df.empty:
+            raise HTTPException(status_code=404, detail="Notification not found")
+
+        idx = notifications_df[notifications_df['id'] == notification_id].index
+        if idx.empty:
+            raise HTTPException(status_code=404, detail="Notification not found")
+
+        # Ensure user owns this notification
+        if str(notifications_df.at[idx[0], 'to_user_id']) != str(user['id']):
+            raise HTTPException(status_code=403, detail="Not authorized to modify this notification")
+
+        notifications_df.at[idx[0], 'read'] = True
+        save_notifications_df(notifications_df)
+
+        return {"message": "Notification marked as read"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error marking notification read: {e}")
+        raise HTTPException(status_code=500, detail="Failed to mark notification as read")
 
 @api_router.post("/screening/submit")
 async def submit_screening(screening_data: GrantScreeningCombined, user: dict = Depends(get_current_user)):

@@ -22,7 +22,8 @@ import {
   XCircle,
   Clock,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  Bell
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -55,6 +56,10 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
   });
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(user?.photo_url ? getPhotoUrl(user.photo_url) : '');
+  // Notifications state
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
   const { toast } = useToast();
 
   // Form states
@@ -79,6 +84,7 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
     loadStartups();
     loadGrants();
     loadAllTrackingData();
+    loadNotifications();
     
     // Auto-refresh tracking data every 5 seconds for real-time updates
     const refreshInterval = setInterval(() => {
@@ -86,6 +92,7 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
       if (selectedStartup) {
         loadTrackingData(selectedStartup);
       }
+      loadNotifications();
     }, 5000);
     
     // Cleanup interval on unmount
@@ -168,6 +175,33 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadNotifications = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${API}/notifications/my`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const list = response.data.notifications || [];
+      setNotifications(list);
+      setUnreadCount(list.filter(n => !n.read).length);
+    } catch (error) {
+      // Silently ignore, don't spam user
+      console.error('Error loading notifications:', error);
+    }
+  };
+
+  const markNotificationRead = async (notificationId) => {
+    try {
+      const token = localStorage.getItem('token');
+      await axios.post(`${API}/notifications/${notificationId}/read`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      await loadNotifications();
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
     }
   };
 
@@ -435,6 +469,20 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
               <p className="text-gray-600">Track startup grant applications and progress</p>
             </div>
             <div className="flex items-center space-x-4">
+              {/* Notifications Bell */}
+              <button
+                type="button"
+                className="relative p-2 rounded-lg border border-gray-200 hover:border-[#5d248f] hover:text-[#5d248f] bg-white"
+                onClick={() => setShowNotifications((v) => !v)}
+                aria-label="Notifications"
+              >
+                <Bell className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-600 text-white text-xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
               {/* Venture Analyst Profile */}
               <div className="flex items-center space-x-3 bg-white rounded-lg p-3 shadow-sm border border-gray-200">
                 {user?.photo_url ? (
@@ -503,6 +551,37 @@ const VentureAnalystDashboard = ({ user, handleLogout }) => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Notifications Panel */}
+        {showNotifications && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Notifications {unreadCount > 0 ? `( ${unreadCount} unread )` : ''}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {notifications.length === 0 ? (
+                <div className="text-center py-6 text-gray-600">No notifications</div>
+              ) : (
+                <div className="space-y-3">
+                  {notifications.map((n) => (
+                    <div key={n.id} className={`flex items-start justify-between p-3 rounded-lg border ${n.read ? 'bg-white' : 'bg-purple-50 border-purple-200'}`}>
+                      <div>
+                        <div className="font-semibold text-gray-900">{n.title || 'Notification'}</div>
+                        <div className="text-sm text-gray-700">{n.message}</div>
+                        <div className="text-xs text-gray-500 mt-1">{new Date(n.created_at).toLocaleString()}</div>
+                      </div>
+                      {!n.read && (
+                        <Button size="sm" variant="outline" onClick={() => markNotificationRead(n.id)}>
+                          Mark read
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Stats Cards */}
         <div className="grid md:grid-cols-4 gap-6 mb-8">
           <Card className="card bg-gradient-to-br from-[#5d248f] to-[#4a1d73] text-white shadow-lg border-0" style={{background: 'linear-gradient(135deg, #5d248f 0%, #4a1d73 100%)'}}>
