@@ -1,2 +1,3 @@
 id,incubation_admin_id,incubation_admin_name,link_code,created_at,is_active,usage_count
-16671d3b-642d-4925-85c1-6e5fdc6778ea,b3e817b9-cffd-4175-bf6a-7a6ba7f57b0d,Vijay Kumar,19TN3IVD,2025-10-27T10:45:56.116583+00:00,True,5
+16671d3b-642d-4925-85c1-6e5fdc6778ea,b3e817b9-cffd-4175-bf6a-7a6ba7f57b0d,Vijay Kumar,19TN3IVD,2025-10-27T10:45:56.116583+00:00,True,7
+fcd77b41-1fbe-4438-9d33-8f7236731ef6,b3e817b9-cffd-4175-bf6a-7a6ba7f57b0d,Vijay Kumar,VMEBACBF,2025-10-29T09:41:16.449911+00:00,False,0

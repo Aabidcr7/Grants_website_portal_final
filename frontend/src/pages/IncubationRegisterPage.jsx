@@ -179,7 +179,7 @@ const IncubationRegisterPage = () => {
             <div className="w-16 h-16 bg-[#5d248f] rounded-full flex items-center justify-center mx-auto mb-4">
               <Building2 className="w-8 h-8 text-white" />
             </div>
-            <CardTitle className="text-2xl font-bold text-gray-900">Join MyProBuddy</CardTitle>
+            <CardTitle className="text-2xl font-bold text-gray-900 font-poppins">Join MyProBuddy</CardTitle>
             <p className="text-gray-600 mt-2">
               Register through {incubationAdmin?.name}
             </p>

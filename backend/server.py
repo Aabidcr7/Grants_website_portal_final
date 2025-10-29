@@ -267,7 +267,7 @@ class GrantScreeningCombined(BaseModel):
     description: str
     contact_email: EmailStr
     contact_phone: str
-    ownership_type: List[str]  # Multi-select field
+    ownership_type: str  # Single selection field
     funding_need: float
     # Page 2 fields
     stage: str
@@ -337,14 +337,36 @@ class AssignStartupsRequest(BaseModel):
     assigned_to_type: str  # venture_analyst or incubation_admin
 
 class CreateGrantRequest(BaseModel):
+    # Required fields
     name: str
-    funding_amount: str
-    deadline: str
     sector: str
-    eligibility: str
-    application_link: str
-    stage: str
+    
+    # Optional fields - matching all CSV columns
+    sector_other: Optional[str] = None
+    eligibility: Optional[str] = ""
+    funding_amount: Optional[str] = ""
+    funding_type: Optional[str] = ""
+    funding_ratio: Optional[str] = ""
+    application_link: Optional[str] = ""
+    documents_required: Optional[str] = ""
+    deadline: Optional[str] = ""
+    region_focus: Optional[str] = ""
+    contact_info: Optional[str] = ""
+    place: Optional[str] = ""
     soft_approval: Optional[str] = "No"
+    stage: Optional[str] = ""
+    sector_focus: Optional[str] = ""
+    gender_focus: Optional[str] = ""
+    innovation_type: Optional[str] = ""
+    trl: Optional[str] = ""
+    impact_criteria: Optional[str] = ""
+    co_investment_requirement: Optional[str] = ""
+    matching_investment: Optional[str] = ""
+    repayment_terms: Optional[str] = ""
+    disbursement_schedule: Optional[str] = ""
+    mentorship_training: Optional[str] = ""
+    program_duration: Optional[str] = ""
+    success_metrics: Optional[str] = ""
 
 class IncubationRegistrationLink(BaseModel):
     incubation_admin_id: str
@@ -490,11 +512,44 @@ def load_grants_df():
         return df
     return pd.DataFrame()
 
+def save_grants_df(df):
+    """Save grants to CSV file"""
+    df.to_csv(GRANTS_CSV, index=False, encoding='utf-8', quoting=1)
+
 def load_soft_approvals():
+    """Load soft approved grant IDs - returns normalized IDs for comparison"""
+    soft_ids = []
+    
+    # Load from soft_approval.csv if exists
     if SOFT_APPROVAL_CSV.exists():
-        df = pd.read_csv(SOFT_APPROVAL_CSV)
-        return df[df['Soft Approval Status'] == 'Yes']['Grant ID'].tolist()
-    return []
+        try:
+            df = pd.read_csv(SOFT_APPROVAL_CSV)
+            # Try to find the soft approval column with different possible names
+            if 'Soft Approval Status' in df.columns:
+                soft_ids = df[df['Soft Approval Status'] == 'Yes']['Grant ID'].tolist()
+            elif 'Soft Approval' in df.columns:
+                soft_ids = df[df['Soft Approval'] == 'Yes']['Grant ID'].tolist()
+            elif 'grant_id' in df.columns:
+                soft_ids = df['grant_id'].tolist()
+        except Exception as e:
+            logging.warning(f"Could not load soft approvals from CSV: {e}")
+    
+    # Normalize IDs - convert to string and remove leading zeros for comparison
+    # Store both formats: "1" and "001" so both will match
+    normalized_ids = set()
+    for id in soft_ids:
+        id_str = str(id).strip()
+        normalized_ids.add(id_str)
+        # Also add zero-padded version
+        if id_str.isdigit():
+            normalized_ids.add(id_str.zfill(3))  # "1" -> "001"
+    
+    return list(normalized_ids)
+
+def is_soft_approved(grant_id, soft_approval_ids):
+    """Check if a grant ID is in the soft approval list, handling format differences"""
+    grant_id_str = str(grant_id).strip()
+    return grant_id_str in soft_approval_ids
 
 async def ai_match_grants(profile: dict) -> List[Dict]:
     """Use OpenAI to match and rank grants"""
@@ -508,7 +563,12 @@ async def ai_match_grants(profile: dict) -> List[Dict]:
     grants_list = grants_df.to_dict('records')
     
     # Prepare prompt for OpenAI
-    ownership_types = ', '.join(profile.get('ownership_type', [])) if profile.get('ownership_type') else 'N/A'
+    # Handle both string and array formats for backward compatibility
+    ownership_type = profile.get('ownership_type', 'N/A')
+    if isinstance(ownership_type, list):
+        ownership_types = ', '.join(ownership_type) if ownership_type else 'N/A'
+    else:
+        ownership_types = ownership_type
     industry_display = profile.get('industry', 'N/A')
     if profile.get('industry') == 'Other' and profile.get('industry_other'):
         industry_display = profile.get('industry_other')
@@ -572,7 +632,7 @@ Return ONLY the JSON array, no other text.
                     "name": str(grant['Name']),
                     "relevance_score": 85.0,
                     "funding_amount": str(grant['Funding Amount']),
-                    "soft_approval": "Yes" if grant['Grant ID'] in soft_approval_ids else "No",
+                    "soft_approval": "Yes" if is_soft_approved(grant['Grant ID'], soft_approval_ids) else "No",
                     "deadline": str(grant['Due Date']),
                     "reason": f"Match based on {profile.get('industry', 'sector')} and {profile.get('stage', 'stage')}",
                     "sector": str(grant['Sector(s)']),
@@ -613,7 +673,7 @@ Return ONLY the JSON array, no other text.
                     "name": str(match['name']),
                     "relevance_score": float(match['relevance_score']),
                     "funding_amount": str(grant['Funding Amount']),
-                    "soft_approval": "Yes" if grant_id in soft_approval_ids else "No",
+                    "soft_approval": "Yes" if is_soft_approved(grant_id, soft_approval_ids) else "No",
                     "deadline": str(grant['Due Date']),
                     "reason": str(match['reason']),
                     "sector": str(grant['Sector(s)']),
@@ -634,7 +694,7 @@ Return ONLY the JSON array, no other text.
                 "name": str(grant['Name']),
                 "relevance_score": 80.0,
                 "funding_amount": str(grant['Funding Amount']),
-                "soft_approval": "Yes" if grant['Grant ID'] in soft_approval_ids else "No",
+                "soft_approval": "Yes" if is_soft_approved(grant['Grant ID'], soft_approval_ids) else "No",
                 "deadline": str(grant['Due Date']),
                 "reason": f"Relevant for {profile.get('industry', 'your sector')}",
                 "sector": str(grant['Sector(s)']),
@@ -1082,7 +1142,12 @@ async def submit_screening(screening_data: GrantScreeningCombined, user: dict = 
             startups_df.at[startup_idx, 'Description'] = profile['description']
             startups_df.at[startup_idx, 'Contact Email'] = profile['contact_email']
             startups_df.at[startup_idx, 'Contact Phone'] = profile['contact_phone']
-            startups_df.at[startup_idx, 'Ownership Type'] = ','.join(profile['ownership_type'])
+            # Handle both string and array formats for backward compatibility
+            ownership_type = profile['ownership_type']
+            if isinstance(ownership_type, list):
+                startups_df.at[startup_idx, 'Ownership Type'] = ', '.join(ownership_type)
+            else:
+                startups_df.at[startup_idx, 'Ownership Type'] = ownership_type
             startups_df.at[startup_idx, 'Funding Need'] = profile['funding_need']
             startups_df.at[startup_idx, 'Stage'] = profile['stage']
             startups_df.at[startup_idx, 'Revenue'] = profile['revenue']
@@ -1107,7 +1172,7 @@ async def submit_screening(screening_data: GrantScreeningCombined, user: dict = 
                 'Description': profile['description'],
                 'Contact Email': profile['contact_email'],
                 'Contact Phone': profile['contact_phone'],
-                'Ownership Type': ','.join(profile['ownership_type']),
+                'Ownership Type': ', '.join(profile['ownership_type']) if isinstance(profile['ownership_type'], list) else profile['ownership_type'],
                 'Funding Need': profile['funding_need'],
                 'Stage': profile['stage'],
                 'Revenue': profile['revenue'],
@@ -1161,11 +1226,15 @@ async def get_matches(user: dict = Depends(get_current_user)):
     # Load grant matches from CSV
     grant_matches_df = load_grant_matches_df()
     user_matches = grant_matches_df[grant_matches_df['user_id'] == user['id']]
+    soft_approval_ids = load_soft_approvals()
     
     grant_list = []
     for _, match_row in user_matches.iterrows():
         try:
             match_data = json.loads(match_row['match_data'])
+            # Update soft_approval status dynamically from current soft_approval.csv
+            if 'grant_id' in match_data:
+                match_data['soft_approval'] = "Yes" if is_soft_approved(match_data['grant_id'], soft_approval_ids) else "No"
             grant_list.append(match_data)
         except (json.JSONDecodeError, KeyError):
             continue
@@ -1182,7 +1251,7 @@ async def get_matches(user: dict = Depends(get_current_user)):
                     "name": str(grant['Name']),
                     "relevance_score": 85.0,
                     "funding_amount": str(grant['Funding Amount']),
-                    "soft_approval": "Yes" if grant['Grant ID'] in load_soft_approvals() else "No",
+                    "soft_approval": "Yes" if is_soft_approved(grant['Grant ID'], soft_approval_ids) else "No",
                     "deadline": str(grant['Due Date']),
                     "reason": f"Sample match for {grant.get('Sector(s)', 'your sector')}",
                     "sector": str(grant['Sector(s)']),
@@ -1264,11 +1333,43 @@ async def get_all_grants(user: dict = Depends(get_current_user)):
     if grants_df.empty:
         return {"grants": []}
     
-    # Clean the data to avoid JSON serialization issues
-    grants_df = grants_df.fillna("")  # Replace NaN with empty strings
-    grants_list = grants_df.to_dict('records')
-    grants_list = convert_numpy_types(grants_list)
-    return {"grants": grants_list[:20]}  # Limit to 20 for performance
+    soft_approvals = load_soft_approvals()
+    
+    # Transform to consistent format with all CSV fields
+    grants_list = []
+    for _, grant in grants_df.iterrows():
+        grants_list.append({
+            'grant_id': str(grant.get('Grant ID', '')),
+            'name': str(grant.get('Name', '')),
+            'sector': str(grant.get('Sector(s)', '')),
+            'eligibility': str(grant.get('Eligibility Criteria', '')),
+            'funding_amount': str(grant.get('Funding Amount', '')),
+            'funding_type': str(grant.get('Funding Type', '')),
+            'funding_ratio': str(grant.get('Funding Ratio', '')),
+            'application_link': str(grant.get('Application Link', '')),
+            'documents_required': str(grant.get('Documents Required', '')),
+            'deadline': str(grant.get('Due Date', '')),
+            'region_focus': str(grant.get('Region/Focus', '')),
+            'contact_info': str(grant.get('Contact Info', '')),
+            'place': str(grant.get('Place', '')),
+            'created_at': str(grant.get('Created At', '')),
+            'soft_approval': str(grant.get('Soft Approval', 'No')),
+            'stage': str(grant.get('Stage of Startup', '')),
+            'sector_focus': str(grant.get('Sector Focus', '')),
+            'gender_focus': str(grant.get('Gender Focus', '')),
+            'innovation_type': str(grant.get('Innovation Type', '')),
+            'trl': str(grant.get('TRL', '')),
+            'impact_criteria': str(grant.get('Impact Criteria', '')),
+            'co_investment_requirement': str(grant.get('Co-investment Requirement', '')),
+            'matching_investment': str(grant.get('Matching Investment', '')),
+            'repayment_terms': str(grant.get('Repayment Terms', '')),
+            'disbursement_schedule': str(grant.get('Disbursement Schedule', '')),
+            'mentorship_training': str(grant.get('Mentorship/Training', '')),
+            'program_duration': str(grant.get('Program Duration', '')),
+            'success_metrics': str(grant.get('Success Metrics', ''))
+        })
+    
+    return {"grants": convert_numpy_types(grants_list[:20])}  # Limit to 20 for performance
 
 @api_router.get("/startups/my")
 async def get_my_startup(user: dict = Depends(get_current_user)):
@@ -2104,6 +2205,7 @@ async def admin_get_all_startups(admin: dict = Depends(get_admin_user)):
         grant_matches_df = load_grant_matches_df()
         assignments_df = load_startup_assignments_df()
         tracking_df = load_grant_tracking_df()
+        grants_df = load_grants_df()
         
         # Helper function to handle NaN values and numpy types
         def safe_value(value, default=''):
@@ -2160,10 +2262,12 @@ async def admin_get_all_startups(admin: dict = Depends(get_admin_user)):
                 except:
                     pass
             
-            # Get assigned analyst
+            # Get assigned analyst (get the latest assignment)
             assignment = assignments_df[assignments_df['startup_id'] == user['id']]
             assigned_analyst = None
             if not assignment.empty:
+                # Sort by assigned_at to get the latest assignment
+                assignment = assignment.sort_values('assigned_at', ascending=False)
                 analyst_id = assignment.iloc[0]['assigned_to_id']
                 analyst = users_df[users_df['id'] == analyst_id]
                 if not analyst.empty:
@@ -2172,6 +2276,28 @@ async def admin_get_all_startups(admin: dict = Depends(get_admin_user)):
                         'name': analyst.iloc[0]['name'],
                         'type': assignment.iloc[0]['assigned_to_type']
                     }
+            
+            # Get registration source (incubation admin who created registration link)
+            registration_source_info = None
+            if pd.notna(user.get('profile')) and user['profile']:
+                try:
+                    user_profile = json.loads(user['profile'])
+                    registration_source = user_profile.get('registration_source', '')
+                    if registration_source:
+                        # Find the incubation admin who owns this link
+                        links_df = load_incubation_links_df()
+                        link_row = links_df[links_df['link_code'] == registration_source]
+                        if not link_row.empty:
+                            incubation_admin_id = link_row.iloc[0]['incubation_admin_id']
+                            incubation_admin = users_df[users_df['id'] == incubation_admin_id]
+                            if not incubation_admin.empty:
+                                registration_source_info = {
+                                    'id': incubation_admin.iloc[0]['id'],
+                                    'name': incubation_admin.iloc[0]['name'],
+                                    'link_code': registration_source
+                                }
+                except:
+                    pass
             
             # Get tracking data for expert tier
             tracking_data = []
@@ -2184,8 +2310,17 @@ async def admin_get_all_startups(admin: dict = Depends(get_admin_user)):
                         if not analyst.empty:
                             analyst_name = analyst.iloc[0]['name']
                     
+                    # Get grant name from grants_df
+                    grant_name = "Unknown Grant"
+                    grant_id = track.get('grant_id', '')
+                    if not grants_df.empty and grant_id:
+                        grant_row = grants_df[grants_df['Grant ID'] == str(grant_id)]
+                        if not grant_row.empty:
+                            grant_name = grant_row.iloc[0].get('Name', 'Unknown Grant')
+                    
                     tracking_data.append({
                         'grant_id': track.get('grant_id', ''),
+                        'grant_name': grant_name,
                         'status': track.get('status', ''),
                         'progress': track.get('progress', ''),
                         'applied_by': analyst_name
@@ -2202,6 +2337,7 @@ async def admin_get_all_startups(admin: dict = Depends(get_admin_user)):
                 'profile': profile,
                 'matched_grants': matched_grants,
                 'assigned_analyst': assigned_analyst,
+                'registration_source_info': registration_source_info,
                 'tracking': tracking_data
             })
         
@@ -2253,23 +2389,53 @@ async def admin_create_grant(request: CreateGrantRequest, admin: dict = Depends(
     try:
         grants_df = load_grants_df()
         
-        # Generate new grant ID
-        max_id = grants_df['Grant ID'].astype(int).max() if not grants_df.empty and 'Grant ID' in grants_df.columns else 0
+        # Generate new grant ID by finding the highest numeric ID and incrementing
+        max_id = 0
+        if not grants_df.empty and 'Grant ID' in grants_df.columns:
+            # Filter only numeric IDs and find max
+            numeric_ids = pd.to_numeric(grants_df['Grant ID'], errors='coerce').dropna()
+            if not numeric_ids.empty:
+                max_id = int(numeric_ids.max())
         new_grant_id = str(max_id + 1)
+        
+        # Create new grant entry with all CSV fields
+        sector_value = request.sector
+        if request.sector == 'Other' and request.sector_other:
+            sector_value = request.sector_other
         
         new_grant = {
             'Grant ID': new_grant_id,
             'Name': request.name,
-            'Funding Amount': request.funding_amount,
-            'Due Date': request.deadline,
-            'Sector(s)': request.sector,
+            'Sector(s)': sector_value,
             'Eligibility Criteria': request.eligibility,
+            'Funding Amount': request.funding_amount,
+            'Funding Type': request.funding_type,
+            'Funding Ratio': request.funding_ratio,
             'Application Link': request.application_link,
-            'Stage of Startup': request.stage
+            'Documents Required': request.documents_required,
+            'Due Date': request.deadline,
+            'Region/Focus': request.region_focus,
+            'Contact Info': request.contact_info,
+            'Place': request.place,
+            'Created At': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+            'Soft Approval': request.soft_approval,
+            'Stage of Startup': request.stage,
+            'Sector Focus': request.sector_focus,
+            'Gender Focus': request.gender_focus,
+            'Innovation Type': request.innovation_type,
+            'TRL': request.trl,
+            'Impact Criteria': request.impact_criteria,
+            'Co-investment Requirement': request.co_investment_requirement,
+            'Matching Investment': request.matching_investment,
+            'Repayment Terms': request.repayment_terms,
+            'Disbursement Schedule': request.disbursement_schedule,
+            'Mentorship/Training': request.mentorship_training,
+            'Program Duration': request.program_duration,
+            'Success Metrics': request.success_metrics
         }
         
         grants_df = pd.concat([grants_df, pd.DataFrame([new_grant])], ignore_index=True)
-        grants_df.to_csv(GRANTS_CSV, index=False)
+        save_grants_df(grants_df)
         
         # Add to soft approval if needed
         if request.soft_approval == "Yes":
@@ -2294,15 +2460,34 @@ async def admin_get_all_grants(admin: dict = Depends(get_admin_user)):
         grants_list = []
         for _, grant in grants_df.iterrows():
             grants_list.append({
-                'grant_id': str(grant['Grant ID']),
-                'name': str(grant['Name']),
-                'funding_amount': str(grant['Funding Amount']),
-                'deadline': str(grant['Due Date']),
-                'sector': str(grant['Sector(s)']),
-                'eligibility': str(grant['Eligibility Criteria']),
-                'application_link': str(grant['Application Link']),
-                'stage': str(grant['Stage of Startup']),
-                'soft_approval': 'Yes' if grant['Grant ID'] in soft_approvals else 'No'
+                'grant_id': str(grant.get('Grant ID', '')),
+                'name': str(grant.get('Name', '')),
+                'sector': str(grant.get('Sector(s)', '')),
+                'eligibility': str(grant.get('Eligibility Criteria', '')),
+                'funding_amount': str(grant.get('Funding Amount', '')),
+                'funding_type': str(grant.get('Funding Type', '')),
+                'funding_ratio': str(grant.get('Funding Ratio', '')),
+                'application_link': str(grant.get('Application Link', '')),
+                'documents_required': str(grant.get('Documents Required', '')),
+                'deadline': str(grant.get('Due Date', '')),
+                'region_focus': str(grant.get('Region/Focus', '')),
+                'contact_info': str(grant.get('Contact Info', '')),
+                'place': str(grant.get('Place', '')),
+                'created_at': str(grant.get('Created At', '')),
+                'soft_approval': str(grant.get('Soft Approval', 'No')),
+                'stage': str(grant.get('Stage of Startup', '')),
+                'sector_focus': str(grant.get('Sector Focus', '')),
+                'gender_focus': str(grant.get('Gender Focus', '')),
+                'innovation_type': str(grant.get('Innovation Type', '')),
+                'trl': str(grant.get('TRL', '')),
+                'impact_criteria': str(grant.get('Impact Criteria', '')),
+                'co_investment_requirement': str(grant.get('Co-investment Requirement', '')),
+                'matching_investment': str(grant.get('Matching Investment', '')),
+                'repayment_terms': str(grant.get('Repayment Terms', '')),
+                'disbursement_schedule': str(grant.get('Disbursement Schedule', '')),
+                'mentorship_training': str(grant.get('Mentorship/Training', '')),
+                'program_duration': str(grant.get('Program Duration', '')),
+                'success_metrics': str(grant.get('Success Metrics', ''))
             })
         
         return {"grants": convert_numpy_types(grants_list)}
@@ -2368,6 +2553,7 @@ async def incubation_get_startups(incubation_admin: dict = Depends(get_incubatio
         assignments_df = load_startup_assignments_df()
         grant_matches_df = load_grant_matches_df()
         tracking_df = load_grant_tracking_df()
+        grants_df = load_grants_df()
         
         # Get assigned startups
         assigned_startups = assignments_df[assignments_df['assigned_to_id'] == incubation_admin['id']]['startup_id'].tolist()
@@ -2377,6 +2563,14 @@ async def incubation_get_startups(incubation_admin: dict = Depends(get_incubatio
         
         startups_data = []
         for _, user in startups.iterrows():
+            # Parse profile data
+            profile_data = {}
+            if pd.notna(user.get('profile')) and user['profile']:
+                try:
+                    profile_data = json.loads(user['profile'])
+                except:
+                    pass
+            
             # Get matched grants
             user_matches = grant_matches_df[grant_matches_df['user_id'] == user['id']]
             matched_grants = []
@@ -2402,8 +2596,17 @@ async def incubation_get_startups(incubation_admin: dict = Depends(get_incubatio
                         if not analyst.empty:
                             analyst_name = analyst.iloc[0]['name']
                     
+                    # Get grant name from grants_df
+                    grant_name = "Unknown Grant"
+                    grant_id = track.get('grant_id', '')
+                    if not grants_df.empty and grant_id:
+                        grant_row = grants_df[grants_df['Grant ID'] == str(grant_id)]
+                        if not grant_row.empty:
+                            grant_name = grant_row.iloc[0].get('Name', 'Unknown Grant')
+                    
                     tracking_data.append({
                         'grant_id': track.get('grant_id', ''),
+                        'grant_name': grant_name,
                         'status': track.get('status', ''),
                         'progress': track.get('progress', ''),
                         'applied_by': analyst_name
@@ -2416,6 +2619,7 @@ async def incubation_get_startups(incubation_admin: dict = Depends(get_incubatio
                 'tier': user['tier'],
                 'created_at': user.get('created_at', ''),
                 'has_completed_screening': bool(user.get('has_completed_screening', False)),
+                'profile': profile_data,
                 'matched_grants': matched_grants,
                 'tracking': tracking_data
             })
@@ -2432,23 +2636,53 @@ async def incubation_create_grant(request: CreateGrantRequest, incubation_admin:
     try:
         grants_df = load_grants_df()
         
-        # Generate new grant ID
-        max_id = grants_df['Grant ID'].astype(int).max() if not grants_df.empty and 'Grant ID' in grants_df.columns else 0
+        # Generate new grant ID by finding the highest numeric ID and incrementing
+        max_id = 0
+        if not grants_df.empty and 'Grant ID' in grants_df.columns:
+            # Filter only numeric IDs and find max
+            numeric_ids = pd.to_numeric(grants_df['Grant ID'], errors='coerce').dropna()
+            if not numeric_ids.empty:
+                max_id = int(numeric_ids.max())
         new_grant_id = str(max_id + 1)
+        
+        # Create new grant entry with all CSV fields
+        sector_value = request.sector
+        if request.sector == 'Other' and request.sector_other:
+            sector_value = request.sector_other
         
         new_grant = {
             'Grant ID': new_grant_id,
             'Name': request.name,
-            'Funding Amount': request.funding_amount,
-            'Due Date': request.deadline,
-            'Sector(s)': request.sector,
+            'Sector(s)': sector_value,
             'Eligibility Criteria': request.eligibility,
+            'Funding Amount': request.funding_amount,
+            'Funding Type': request.funding_type,
+            'Funding Ratio': request.funding_ratio,
             'Application Link': request.application_link,
-            'Stage of Startup': request.stage
+            'Documents Required': request.documents_required,
+            'Due Date': request.deadline,
+            'Region/Focus': request.region_focus,
+            'Contact Info': request.contact_info,
+            'Place': request.place,
+            'Created At': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+            'Soft Approval': request.soft_approval,
+            'Stage of Startup': request.stage,
+            'Sector Focus': request.sector_focus,
+            'Gender Focus': request.gender_focus,
+            'Innovation Type': request.innovation_type,
+            'TRL': request.trl,
+            'Impact Criteria': request.impact_criteria,
+            'Co-investment Requirement': request.co_investment_requirement,
+            'Matching Investment': request.matching_investment,
+            'Repayment Terms': request.repayment_terms,
+            'Disbursement Schedule': request.disbursement_schedule,
+            'Mentorship/Training': request.mentorship_training,
+            'Program Duration': request.program_duration,
+            'Success Metrics': request.success_metrics
         }
         
         grants_df = pd.concat([grants_df, pd.DataFrame([new_grant])], ignore_index=True)
-        grants_df.to_csv(GRANTS_CSV, index=False)
+        save_grants_df(grants_df)
         
         if request.soft_approval == "Yes":
             soft_approvals = load_soft_approvals()
@@ -2472,15 +2706,34 @@ async def incubation_get_grants(incubation_admin: dict = Depends(get_incubation_
         grants_list = []
         for _, grant in grants_df.iterrows():
             grants_list.append({
-                'grant_id': str(grant['Grant ID']),
-                'name': str(grant['Name']),
-                'funding_amount': str(grant['Funding Amount']),
-                'deadline': str(grant['Due Date']),
-                'sector': str(grant['Sector(s)']),
-                'eligibility': str(grant['Eligibility Criteria']),
-                'application_link': str(grant['Application Link']),
-                'stage': str(grant['Stage of Startup']),
-                'soft_approval': 'Yes' if grant['Grant ID'] in soft_approvals else 'No'
+                'grant_id': str(grant.get('Grant ID', '')),
+                'name': str(grant.get('Name', '')),
+                'sector': str(grant.get('Sector(s)', '')),
+                'eligibility': str(grant.get('Eligibility Criteria', '')),
+                'funding_amount': str(grant.get('Funding Amount', '')),
+                'funding_type': str(grant.get('Funding Type', '')),
+                'funding_ratio': str(grant.get('Funding Ratio', '')),
+                'application_link': str(grant.get('Application Link', '')),
+                'documents_required': str(grant.get('Documents Required', '')),
+                'deadline': str(grant.get('Due Date', '')),
+                'region_focus': str(grant.get('Region/Focus', '')),
+                'contact_info': str(grant.get('Contact Info', '')),
+                'place': str(grant.get('Place', '')),
+                'created_at': str(grant.get('Created At', '')),
+                'soft_approval': str(grant.get('Soft Approval', 'No')),
+                'stage': str(grant.get('Stage of Startup', '')),
+                'sector_focus': str(grant.get('Sector Focus', '')),
+                'gender_focus': str(grant.get('Gender Focus', '')),
+                'innovation_type': str(grant.get('Innovation Type', '')),
+                'trl': str(grant.get('TRL', '')),
+                'impact_criteria': str(grant.get('Impact Criteria', '')),
+                'co_investment_requirement': str(grant.get('Co-investment Requirement', '')),
+                'matching_investment': str(grant.get('Matching Investment', '')),
+                'repayment_terms': str(grant.get('Repayment Terms', '')),
+                'disbursement_schedule': str(grant.get('Disbursement Schedule', '')),
+                'mentorship_training': str(grant.get('Mentorship/Training', '')),
+                'program_duration': str(grant.get('Program Duration', '')),
+                'success_metrics': str(grant.get('Success Metrics', ''))
             })
         
         return {"grants": convert_numpy_types(grants_list)}
@@ -2598,6 +2851,7 @@ async def get_startups_via_registration_links(incubation_admin: dict = Depends(g
         links_df = load_incubation_links_df()
         grant_matches_df = load_grant_matches_df()
         tracking_df = load_grant_tracking_df()
+        grants_df = load_grants_df()
         
         # Get all link codes for this incubation admin
         admin_links = links_df[links_df['incubation_admin_id'] == incubation_admin['id']]
@@ -2644,8 +2898,17 @@ async def get_startups_via_registration_links(incubation_admin: dict = Depends(g
                             if not analyst.empty:
                                 analyst_name = analyst.iloc[0]['name']
                         
+                        # Get grant name from grants_df
+                        grant_name = "Unknown Grant"
+                        grant_id = track.get('grant_id', '')
+                        if not grants_df.empty and grant_id:
+                            grant_row = grants_df[grants_df['Grant ID'] == str(grant_id)]
+                            if not grant_row.empty:
+                                grant_name = grant_row.iloc[0].get('Name', 'Unknown Grant')
+                        
                         tracking_data.append({
                             'grant_id': track.get('grant_id', ''),
+                            'grant_name': grant_name,
                             'status': track.get('status', ''),
                             'progress': track.get('progress', ''),
                             'applied_by': analyst_name
@@ -2774,6 +3037,123 @@ async def venture_analyst_get_assigned_startups(analyst: dict = Depends(get_curr
         
     except Exception as e:
         logging.error(f"Error fetching assigned startups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/venture-analyst/grants")
+async def venture_analyst_get_grants(analyst: dict = Depends(get_current_user)):
+    """Get all grants for venture analyst to view and manage"""
+    try:
+        if analyst['tier'] != 'venture_analyst':
+            raise HTTPException(status_code=403, detail="Venture analyst access required")
+        
+        grants_df = load_grants_df()
+        soft_approvals = load_soft_approvals()
+        
+        grants_list = []
+        for _, grant in grants_df.iterrows():
+            grants_list.append({
+                'grant_id': str(grant.get('Grant ID', '')),
+                'name': str(grant.get('Name', '')),
+                'sector': str(grant.get('Sector(s)', '')),
+                'eligibility': str(grant.get('Eligibility Criteria', '')),
+                'funding_amount': str(grant.get('Funding Amount', '')),
+                'funding_type': str(grant.get('Funding Type', '')),
+                'funding_ratio': str(grant.get('Funding Ratio', '')),
+                'application_link': str(grant.get('Application Link', '')),
+                'documents_required': str(grant.get('Documents Required', '')),
+                'deadline': str(grant.get('Due Date', '')),
+                'region_focus': str(grant.get('Region/Focus', '')),
+                'contact_info': str(grant.get('Contact Info', '')),
+                'place': str(grant.get('Place', '')),
+                'created_at': str(grant.get('Created At', '')),
+                'soft_approval': str(grant.get('Soft Approval', 'No')),
+                'stage': str(grant.get('Stage of Startup', '')),
+                'sector_focus': str(grant.get('Sector Focus', '')),
+                'gender_focus': str(grant.get('Gender Focus', '')),
+                'innovation_type': str(grant.get('Innovation Type', '')),
+                'trl': str(grant.get('TRL', '')),
+                'impact_criteria': str(grant.get('Impact Criteria', '')),
+                'co_investment_requirement': str(grant.get('Co-investment Requirement', '')),
+                'matching_investment': str(grant.get('Matching Investment', '')),
+                'repayment_terms': str(grant.get('Repayment Terms', '')),
+                'disbursement_schedule': str(grant.get('Disbursement Schedule', '')),
+                'mentorship_training': str(grant.get('Mentorship/Training', '')),
+                'program_duration': str(grant.get('Program Duration', '')),
+                'success_metrics': str(grant.get('Success Metrics', ''))
+            })
+        
+        return {"grants": convert_numpy_types(grants_list)}
+        
+    except Exception as e:
+        logging.error(f"Error fetching grants: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/venture-analyst/grants")
+async def venture_analyst_create_grant(request: CreateGrantRequest, analyst: dict = Depends(get_current_user)):
+    """Venture analyst endpoint to add new grants"""
+    try:
+        if analyst['tier'] != 'venture_analyst':
+            raise HTTPException(status_code=403, detail="Venture analyst access required")
+        
+        grants_df = load_grants_df()
+        
+        # Generate new grant ID by finding the highest numeric ID and incrementing
+        max_id = 0
+        if not grants_df.empty and 'Grant ID' in grants_df.columns:
+            # Filter only numeric IDs and find max
+            numeric_ids = pd.to_numeric(grants_df['Grant ID'], errors='coerce').dropna()
+            if not numeric_ids.empty:
+                max_id = int(numeric_ids.max())
+        new_grant_id = str(max_id + 1)
+        
+        # Create new grant entry with all CSV fields
+        sector_value = request.sector
+        if request.sector == 'Other' and request.sector_other:
+            sector_value = request.sector_other
+        
+        new_grant = {
+            'Grant ID': new_grant_id,
+            'Name': request.name,
+            'Sector(s)': sector_value,
+            'Eligibility Criteria': request.eligibility,
+            'Funding Amount': request.funding_amount,
+            'Funding Type': request.funding_type,
+            'Funding Ratio': request.funding_ratio,
+            'Application Link': request.application_link,
+            'Documents Required': request.documents_required,
+            'Due Date': request.deadline,
+            'Region/Focus': request.region_focus,
+            'Contact Info': request.contact_info,
+            'Place': request.place,
+            'Created At': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+            'Soft Approval': request.soft_approval,
+            'Stage of Startup': request.stage,
+            'Sector Focus': request.sector_focus,
+            'Gender Focus': request.gender_focus,
+            'Innovation Type': request.innovation_type,
+            'TRL': request.trl,
+            'Impact Criteria': request.impact_criteria,
+            'Co-investment Requirement': request.co_investment_requirement,
+            'Matching Investment': request.matching_investment,
+            'Repayment Terms': request.repayment_terms,
+            'Disbursement Schedule': request.disbursement_schedule,
+            'Mentorship/Training': request.mentorship_training,
+            'Program Duration': request.program_duration,
+            'Success Metrics': request.success_metrics
+        }
+        
+        # Add to dataframe
+        new_grant_df = pd.DataFrame([new_grant])
+        grants_df = pd.concat([grants_df, new_grant_df], ignore_index=True)
+        save_grants_df(grants_df)
+        
+        return {
+            "message": "Grant created successfully",
+            "grant_id": new_grant_id
+        }
+        
+    except Exception as e:
+        logging.error(f"Error creating grant: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 app.include_router(api_router)

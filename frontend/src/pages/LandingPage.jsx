@@ -95,9 +95,13 @@ const LandingPage = () => {
       {/* Navigation */}
       <nav className="fixed top-0 w-full bg-white/95 backdrop-blur-md z-50 border-b border-gray-100" data-testid="main-navigation">
         <div className="container mx-auto px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center space-x-2">
-            <Award className="w-8 h-8 text-[#5d248f]" />
-            <h1 className="text-2xl font-bold gradient-text">MyProBuddy</h1>
+          <div className="flex items-center space-x-3">
+            <img 
+              src="/myprobuddy-logo.png" 
+              alt="MyProBuddy Logo" 
+              className="w-10 h-10 object-contain"
+            />
+            <h1 className="text-2xl font-bold text-gray-900 font-poppins">MyProBuddy</h1>
           </div>
           <div className="flex space-x-4">
             <Button variant="ghost" onClick={() => navigate('/login')} data-testid="nav-login-btn">
@@ -383,8 +387,12 @@ const LandingPage = () => {
           <div className="grid md:grid-cols-4 gap-8">
             <div>
               <div className="flex items-center space-x-2 mb-4">
-                <Award className="w-8 h-8" />
-                <h3 className="text-xl font-bold">MyProBuddy</h3>
+                <img 
+                  src="/myprobuddy-logo.png" 
+                  alt="MyProBuddy Logo" 
+                  className="w-8 h-8 object-contain"
+                />
+                <h3 className="text-xl font-bold text-white font-poppins">MyProBuddy</h3>
               </div>
               <p className="text-gray-400">AI-powered grant matching for startups</p>
             </div>

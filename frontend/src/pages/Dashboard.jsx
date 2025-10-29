@@ -260,8 +260,12 @@ const FreeTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLogo
         <div className="container mx-auto px-6 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-3">
-              <Award className="w-8 h-8 text-[#5d248f]" />
-              <h1 className="text-2xl font-bold gradient-text">MyProBuddy</h1>
+              <img 
+                src="/myprobuddy-logo.png" 
+                alt="MyProBuddy Logo" 
+                className="w-8 h-8 object-contain"
+              />
+              <h1 className="text-2xl font-bold text-gray-900 font-poppins">MyProBuddy</h1>
             </div>
             <div className="flex items-center space-x-4">
               <Badge className="bg-gray-600 text-white flex items-center space-x-1 px-3 py-1" data-testid="tier-badge">
@@ -630,8 +634,12 @@ const PremiumTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleL
         <div className="container mx-auto px-6 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-3">
-              <Award className="w-8 h-8 text-[#f46d19]" />
-              <h1 className="text-2xl font-bold" style={{ background: 'linear-gradient(135deg, #f46d19 0%, #ef3e25 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>MyProBuddy Premium</h1>
+              <img 
+                src="/myprobuddy-logo.png" 
+                alt="MyProBuddy Logo" 
+                className="w-8 h-8 object-contain"
+              />
+              <h1 className="text-2xl font-bold text-gray-900 font-poppins">MyProBuddy Premium</h1>
             </div>
             <div className="flex items-center space-x-4">
               <Button variant="ghost" size="sm" className="relative" data-testid="notifications-btn">
@@ -1149,8 +1157,12 @@ const ExpertTierDashboard = ({ user, grants, searchTerm, setSearchTerm, handleLo
         <div className="container mx-auto px-6 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-3">
-              <Crown className="w-8 h-8" />
-              <h1 className="text-2xl font-bold">MyProBuddy Expert CRM</h1>
+              <img 
+                src="/myprobuddy-logo.png" 
+                alt="MyProBuddy Logo" 
+                className="w-8 h-8 object-contain"
+              />
+              <h1 className="text-2xl font-bold text-white font-poppins">MyProBuddy Expert CRM</h1>
             </div>
             <div className="flex items-center space-x-4">
               <Button variant="ghost" size="sm" className="text-white hover:bg-white/20" data-testid="notifications-btn">

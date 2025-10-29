@@ -7,7 +7,6 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group';
-import { MultiSelect } from '../components/ui/multi-select';
 import { Award, ArrowLeft, ArrowRight, CheckCircle, Sparkles, Target, Gauge } from 'lucide-react';
 import { Progress } from '../components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -54,7 +53,7 @@ const ScreeningForm = () => {
     description: '',
     contact_email: '',
     contact_phone: '',
-    ownership_type: [],
+    ownership_type: '',
     funding_need: 0
   });
 
@@ -76,8 +75,7 @@ const ScreeningForm = () => {
     { value: 'Private Limited', label: 'Private Limited' },
     { value: 'Public Limited', label: 'Public Limited' },
     { value: 'LLP', label: 'LLP (Limited Liability Partnership)' },
-    { value: 'MSME', label: 'MSME' },
-    { value: 'Other', label: 'Other' }
+    { value: 'MSME', label: 'MSME' }
   ];
 
   // Dynamic grant availability reduction logic
@@ -97,9 +95,9 @@ const ScreeningForm = () => {
     const dlen = (page2Data.description || '').trim().length;
     if (dlen > 0) units.push('desc');
     if (dlen > 200) units.push('desc2');
-    // 4) Ownership - each selected option is its own unit for unique step application
-    if (Array.isArray(page2Data.ownership_type) && page2Data.ownership_type.length) {
-      page2Data.ownership_type.forEach((opt) => units.push(`own:${opt}`));
+    // 4) Ownership - single selected option
+    if (page2Data.ownership_type) {
+      units.push(`own:${page2Data.ownership_type}`);
     }
     // 5) Funding need - bucketed into up to 3 units
     const fn = Number(page2Data.funding_need) || 0;
@@ -370,24 +368,57 @@ const ScreeningForm = () => {
                 </div>
               </div>
 
-              {/* Premium progress bar */}
-              <div className="mt-5">
-                <div className="h-3 w-full rounded-full overflow-hidden relative ring-1 ring-white/20" style={{background:'linear-gradient(90deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.08) 100%)'}}>
-                  <div
-                    className="h-3 rounded-full transition-all duration-500"
-                    style={{
-                      width: `${Math.max(2, (totalGrantsAvailable / totalGrantsBase) * 100)}%`,
-                      background: 'repeating-linear-gradient(45deg, #34d399, #34d399 10px, #60a5fa 10px, #60a5fa 20px, #a78bfa 20px, #a78bfa 30px)'
-                    }}
-                  />
-                  <div
-                    className="absolute -top-1 h-5 w-5 rounded-full bg-white shadow-lg border border-white/60"
-                    style={{ left: `calc(${Math.max(2, (totalGrantsAvailable / totalGrantsBase) * 100)}% - 10px)` }}
-                  />
+              {/* Enhanced progress bar */}
+              <div className="mt-6">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 rounded-full bg-gradient-to-r from-emerald-400 to-blue-400"></div>
+                    <span className="text-sm font-medium text-white/90">Grant Targeting</span>
+                  </div>
+                  <div className="text-sm font-semibold text-white">
+                    {totalGrantsAvailable.toLocaleString()} grants
+                  </div>
                 </div>
-                <div className="flex justify-between text-[11px] text-white/80 mt-1">
-                  <span>Broader</span>
-                  <span>Highly Targeted</span>
+                
+                <div className="relative">
+                  {/* Background track */}
+                  <div className="h-4 w-full rounded-full bg-gradient-to-r from-slate-700/50 to-slate-600/50 border border-slate-600/30 overflow-hidden">
+                    {/* Progress fill with improved gradient */}
+                    <div
+                      className="h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden"
+                      style={{
+                        width: `${Math.max(3, (totalGrantsAvailable / totalGrantsBase) * 100)}%`,
+                        background: 'linear-gradient(90deg, #10b981 0%, #3b82f6 50%, #8b5cf6 100%)',
+                        boxShadow: '0 0 20px rgba(59, 130, 246, 0.3)'
+                      }}
+                    >
+                      {/* Animated shimmer effect */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse"></div>
+                    </div>
+                  </div>
+                  
+                  {/* Progress indicator dot */}
+                  <div
+                    className="absolute -top-1 h-6 w-6 rounded-full bg-white shadow-xl border-2 border-blue-400 flex items-center justify-center transition-all duration-700 ease-out"
+                    style={{ 
+                      left: `calc(${Math.max(3, (totalGrantsAvailable / totalGrantsBase) * 100)}% - 12px)`,
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3), 0 0 0 4px rgba(59, 130, 246, 0.2)'
+                    }}
+                  >
+                    <div className="w-2 h-2 rounded-full bg-gradient-to-r from-blue-500 to-purple-500"></div>
+                  </div>
+                </div>
+                
+                {/* Labels */}
+                <div className="flex justify-between text-xs text-white/70 mt-3">
+                  <span className="flex items-center space-x-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-slate-400"></div>
+                    <span>Broader Scope</span>
+                  </span>
+                  <span className="flex items-center space-x-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                    <span>Highly Targeted</span>
+                  </span>
                 </div>
               </div>
 
@@ -659,14 +690,19 @@ const ScreeningForm = () => {
 
                 <div className="grid md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <Label htmlFor="ownership_type">Ownership Type * (Multi-select)</Label>
-                    <MultiSelect
-                      options={ownershipTypeOptions}
+                    <Label>Ownership Type *</Label>
+                    <RadioGroup
                       value={page2Data.ownership_type}
-                      onChange={(value) => setPage2Data({ ...page2Data, ownership_type: value })}
-                      placeholder="Select ownership types"
-                      data-testid="ownership-type-select"
-                    />
+                      onValueChange={(value) => setPage2Data({ ...page2Data, ownership_type: value })}
+                      data-testid="ownership-type-radio"
+                    >
+                      {ownershipTypeOptions.map(option => (
+                        <div key={option.value} className="flex items-center space-x-2">
+                          <RadioGroupItem value={option.value} id={`ownership-${option.value}`} />
+                          <Label htmlFor={`ownership-${option.value}`} className="font-normal cursor-pointer">{option.label}</Label>
+                        </div>
+                      ))}
+                    </RadioGroup>
                   </div>
 
                   <div className="space-y-2">

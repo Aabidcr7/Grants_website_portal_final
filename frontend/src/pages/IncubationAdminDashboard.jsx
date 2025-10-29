@@ -3,10 +3,12 @@ import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Textarea } from '../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
-import { Building2, FileText, Plus, Eye, Link2, Users, Copy, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Users, Building2, FileText, Plus, Link2, Copy, Eye, ToggleLeft, ToggleRight } from 'lucide-react';
 import axios from 'axios';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
@@ -17,19 +19,45 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
   const [grants, setGrants] = useState([]);
   const [registrationLinks, setRegistrationLinks] = useState([]);
   const [startupsViaLinks, setStartupsViaLinks] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [viaLinksCurrentPage, setViaLinksCurrentPage] = useState(1);
+  const [grantsCurrentPage, setGrantsCurrentPage] = useState(1);
+  const startupsPerPage = 10;
+  const grantsPerPage = 10;
   const [isAddGrantDialogOpen, setIsAddGrantDialogOpen] = useState(false);
   const [isStartupDetailsDialogOpen, setIsStartupDetailsDialogOpen] = useState(false);
   const [selectedStartup, setSelectedStartup] = useState(null);
+  const [selectedGrantDetails, setSelectedGrantDetails] = useState(null);
+  const [isViewDetailsOpen, setIsViewDetailsOpen] = useState(false);
   
   const [newGrant, setNewGrant] = useState({
     name: '',
-    funding_amount: '',
-    deadline: '',
     sector: '',
+    sector_other: '',
     eligibility: '',
+    funding_amount: '',
+    funding_type: '',
+    funding_ratio: '',
     application_link: '',
+    documents_required: '',
+    deadline: '',
+    region_focus: '',
+    contact_info: '',
+    place: '',
+    soft_approval: 'No',
     stage: '',
-    soft_approval: 'No'
+    sector_focus: '',
+    gender_focus: '',
+    innovation_type: '',
+    trl: '',
+    impact_criteria: '',
+    co_investment_requirement: '',
+    matching_investment: '',
+    repayment_terms: '',
+    disbursement_schedule: '',
+    mentorship_training: '',
+    program_duration: '',
+    success_metrics: ''
   });
   
   useEffect(() => {
@@ -140,6 +168,17 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
     setIsStartupDetailsDialogOpen(true);
   };
 
+  // Reset page to 1 when switching tabs
+  useEffect(() => {
+    if (activeTab === 'startups') {
+      setCurrentPage(1);
+    } else if (activeTab === 'via-links') {
+      setViaLinksCurrentPage(1);
+    } else if (activeTab === 'grants') {
+      setGrantsCurrentPage(1);
+    }
+  }, [activeTab]);
+
   const handleGenerateLink = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -237,17 +276,36 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
       </div>
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'startups' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-900">Assigned Startups</h2>
-            
-            {startups.length === 0 ? (
-              <Card className="p-8 text-center">
-                <p className="text-gray-600">No startups assigned yet</p>
-              </Card>
-            ) : (
-              <div className="grid grid-cols-1 gap-4">
-                {startups.map((startup) => (
+        {activeTab === 'startups' && (() => {
+          // Sort startups by created_at (newest first)
+          const sortedStartups = [...startups].sort((a, b) => 
+            new Date(b.created_at) - new Date(a.created_at)
+          );
+          
+          // Pagination logic
+          const indexOfLastStartup = currentPage * startupsPerPage;
+          const indexOfFirstStartup = indexOfLastStartup - startupsPerPage;
+          const currentStartups = sortedStartups.slice(indexOfFirstStartup, indexOfLastStartup);
+          const totalPages = Math.ceil(sortedStartups.length / startupsPerPage);
+          
+          return (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Assigned Startups</h2>
+                {sortedStartups.length > 0 && (
+                  <p className="text-sm text-gray-600 mt-1">
+                    Showing {indexOfFirstStartup + 1}-{Math.min(indexOfLastStartup, sortedStartups.length)} of {sortedStartups.length} startups
+                  </p>
+                )}
+              </div>
+              
+              {sortedStartups.length === 0 ? (
+                <Card className="p-8 text-center">
+                  <p className="text-gray-600">No startups assigned yet</p>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {currentStartups.map((startup) => (
                   <Card key={startup.id} className="p-6">
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
@@ -278,7 +336,7 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
                             </p>
                             {startup.tracking.map((track, idx) => (
                               <div key={idx} className="text-sm text-gray-600 ml-4 mb-1">
-                                • Grant ID: {track.grant_id} - 
+                                • {track.grant_name || 'Unknown Grant'} (ID: {track.grant_id}) - 
                                 <Badge className={`ml-2 ${getStatusColor(track.status)}`}>
                                   {track.status}
                                 </Badge>
@@ -303,21 +361,77 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {activeTab === 'via-links' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-900">Startups Registered via Your Links</h2>
             
-            {startupsViaLinks.length === 0 ? (
-              <Card className="p-8 text-center">
-                <p className="text-gray-600">No startups have registered via your links yet</p>
-                <p className="text-sm text-gray-500 mt-2">Generate registration links to start receiving startups</p>
-              </Card>
-            ) : (
-              <div className="grid grid-cols-1 gap-4">
-                {startupsViaLinks.map((startup) => (
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex justify-center items-center space-x-2 mt-6">
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="px-4"
+                >
+                  Previous
+                </Button>
+                
+                <div className="flex space-x-1">
+                  {[...Array(totalPages)].map((_, idx) => (
+                    <Button
+                      key={idx}
+                      variant={currentPage === idx + 1 ? 'default' : 'outline'}
+                      onClick={() => setCurrentPage(idx + 1)}
+                      className={currentPage === idx + 1 ? 'bg-[#5d248f] hover:bg-[#4a1d70]' : ''}
+                    >
+                      {idx + 1}
+                    </Button>
+                  ))}
+                </div>
+                
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  className="px-4"
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </div>
+        );
+        })()}
+
+        {activeTab === 'via-links' && (() => {
+          // Sort startups by created_at (newest first)
+          const sortedStartupsViaLinks = [...startupsViaLinks].sort((a, b) => 
+            new Date(b.created_at) - new Date(a.created_at)
+          );
+          
+          // Pagination logic
+          const indexOfLastStartup = viaLinksCurrentPage * startupsPerPage;
+          const indexOfFirstStartup = indexOfLastStartup - startupsPerPage;
+          const currentStartupsViaLinks = sortedStartupsViaLinks.slice(indexOfFirstStartup, indexOfLastStartup);
+          const totalPages = Math.ceil(sortedStartupsViaLinks.length / startupsPerPage);
+          
+          return (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Startups Registered via Your Links</h2>
+                {sortedStartupsViaLinks.length > 0 && (
+                  <p className="text-sm text-gray-600 mt-1">
+                    Showing {indexOfFirstStartup + 1}-{Math.min(indexOfLastStartup, sortedStartupsViaLinks.length)} of {sortedStartupsViaLinks.length} startups
+                  </p>
+                )}
+              </div>
+              
+              {sortedStartupsViaLinks.length === 0 ? (
+                <Card className="p-8 text-center">
+                  <p className="text-gray-600">No startups have registered via your links yet</p>
+                  <p className="text-sm text-gray-500 mt-2">Generate registration links to start receiving startups</p>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {currentStartupsViaLinks.map((startup) => (
                   <Card key={startup.id} className="p-6">
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
@@ -354,7 +468,7 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
                             </p>
                             {startup.tracking.map((track, idx) => (
                               <div key={idx} className="text-sm text-gray-600 ml-4 mb-1">
-                                • Grant ID: {track.grant_id} - 
+                                • {track.grant_name || 'Unknown Grant'} (ID: {track.grant_id}) - 
                                 <Badge className={`ml-2 ${getStatusColor(track.status)}`}>
                                   {track.status}
                                 </Badge>
@@ -379,8 +493,45 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
                 ))}
               </div>
             )}
+            
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex justify-center items-center space-x-2 mt-6">
+                <Button
+                  variant="outline"
+                  onClick={() => setViaLinksCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={viaLinksCurrentPage === 1}
+                  className="px-4"
+                >
+                  Previous
+                </Button>
+                
+                <div className="flex space-x-1">
+                  {[...Array(totalPages)].map((_, idx) => (
+                    <Button
+                      key={idx}
+                      variant={viaLinksCurrentPage === idx + 1 ? 'default' : 'outline'}
+                      onClick={() => setViaLinksCurrentPage(idx + 1)}
+                      className={viaLinksCurrentPage === idx + 1 ? 'bg-[#5d248f] hover:bg-[#4a1d70]' : ''}
+                    >
+                      {idx + 1}
+                    </Button>
+                  ))}
+                </div>
+                
+                <Button
+                  variant="outline"
+                  onClick={() => setViaLinksCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={viaLinksCurrentPage === totalPages}
+                  className="px-4"
+                >
+                  Next
+                </Button>
+              </div>
+            )}
           </div>
-        )}
+        );
+        })()}
 
         {activeTab === 'links' && (
           <div className="space-y-6">
@@ -464,52 +615,80 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
           </div>
         )}
         
-        {activeTab === 'grants' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-gray-900">Grants Database</h2>
-              <Button 
-                onClick={() => setIsAddGrantDialogOpen(true)}
-                className="bg-[#5d248f] hover:bg-[#4a1d70]"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Add Grant
-              </Button>
-            </div>
-            
-            <div className="grid grid-cols-1 gap-4">
-              {grants.map((grant) => (
+        {activeTab === 'grants' && (() => {
+          // Pagination logic for grants
+          const indexOfLastGrant = grantsCurrentPage * grantsPerPage;
+          const indexOfFirstGrant = indexOfLastGrant - grantsPerPage;
+          const currentGrants = grants.slice(indexOfFirstGrant, indexOfLastGrant);
+          const totalGrantsPages = Math.ceil(grants.length / grantsPerPage);
+          
+          return (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">Grants Database</h2>
+                  {grants.length > 0 && (
+                    <p className="text-sm text-gray-600 mt-1">
+                      Showing {indexOfFirstGrant + 1}-{Math.min(indexOfLastGrant, grants.length)} of {grants.length} grants
+                    </p>
+                  )}
+                </div>
+                <Button 
+                  onClick={() => setIsAddGrantDialogOpen(true)}
+                  className="bg-[#5d248f] hover:bg-[#4a1d70]"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Grant
+                </Button>
+              </div>
+              
+              <div className="grid grid-cols-1 gap-4">
+                {currentGrants.map((grant) => (
                 <Card key={grant.grant_id} className="p-6">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-3 mb-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center space-x-3">
                       <h3 className="text-lg font-semibold text-gray-900">{grant.name}</h3>
                       {grant.soft_approval === 'Yes' && (
                         <Badge className="bg-green-500">Soft Approved</Badge>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <span className="font-medium text-gray-700">Funding Amount:</span>
-                        <p className="text-gray-600">{grant.funding_amount}</p>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-700">Deadline:</span>
-                        <p className="text-gray-600">{grant.deadline}</p>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-700">Sector:</span>
-                        <p className="text-gray-600">{grant.sector}</p>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-700">Stage:</span>
-                        <p className="text-gray-600">{grant.stage}</p>
-                      </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        setSelectedGrantDetails(grant);
+                        setIsViewDetailsOpen(true);
+                      }}
+                    >
+                      View Details
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium text-gray-700">Funding Amount:</span>
+                      <p className="text-gray-600">{grant.funding_amount}</p>
                     </div>
+                    <div>
+                      <span className="font-medium text-gray-700">Deadline:</span>
+                      <p className="text-gray-600">{grant.deadline}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700">Sector:</span>
+                      <p className="text-gray-600">{grant.sector}</p>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700">Stage:</span>
+                      <p className="text-gray-600">{grant.stage}</p>
+                    </div>
+                  </div>
+                  {grant.eligibility && (
                     <div className="mt-3">
                       <span className="font-medium text-gray-700 text-sm">Eligibility:</span>
-                      <p className="text-gray-600 text-sm">{grant.eligibility}</p>
+                      <p className="text-gray-600 text-sm">{grant.eligibility.substring(0, 150)}{grant.eligibility.length > 150 ? '...' : ''}</p>
                     </div>
-                    <div className="mt-2">
+                  )}
+                  <div className="mt-2">
+                    {grant.application_link && (
                       <a 
                         href={grant.application_link} 
                         target="_blank" 
@@ -518,104 +697,369 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
                       >
                         Application Link →
                       </a>
-                    </div>
+                    )}
                   </div>
                 </Card>
               ))}
             </div>
+            
+            {/* Pagination Controls */}
+            {totalGrantsPages > 1 && (
+              <div className="flex justify-center items-center space-x-2 mt-6">
+                <Button
+                  variant="outline"
+                  onClick={() => setGrantsCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={grantsCurrentPage === 1}
+                  className="px-4"
+                >
+                  Previous
+                </Button>
+                
+                <div className="flex space-x-1">
+                  {[...Array(totalGrantsPages)].map((_, idx) => (
+                    <Button
+                      key={idx}
+                      variant={grantsCurrentPage === idx + 1 ? 'default' : 'outline'}
+                      onClick={() => setGrantsCurrentPage(idx + 1)}
+                      className={grantsCurrentPage === idx + 1 ? 'bg-[#5d248f] hover:bg-[#4a1d70]' : ''}
+                    >
+                      {idx + 1}
+                    </Button>
+                  ))}
+                </div>
+                
+                <Button
+                  variant="outline"
+                  onClick={() => setGrantsCurrentPage(prev => Math.min(prev + 1, totalGrantsPages))}
+                  disabled={grantsCurrentPage === totalGrantsPages}
+                  className="px-4"
+                >
+                  Next
+                </Button>
+              </div>
+            )}
           </div>
-        )}
+        );
+        })()}
       </div>
       
       {/* Add Grant Dialog */}
       <Dialog open={isAddGrantDialogOpen} onOpenChange={setIsAddGrantDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add New Grant</DialogTitle>
+            <p className="text-sm text-gray-500">* Required fields</p>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="grant-name">Grant Name</Label>
-              <Input
-                id="grant-name"
-                value={newGrant.name}
-                onChange={(e) => setNewGrant({...newGrant, name: e.target.value})}
-                placeholder="Enter grant name"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="grant-amount">Funding Amount</Label>
-                <Input
-                  id="grant-amount"
-                  value={newGrant.funding_amount}
-                  onChange={(e) => setNewGrant({...newGrant, funding_amount: e.target.value})}
-                  placeholder="e.g., ₹5,00,000"
-                />
+          <div className="space-y-6">
+            {/* Basic Information */}
+            <div className="space-y-4">
+              <h3 className="font-semibold text-lg border-b pb-2">Basic Information</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="grant-name">Grant Name *</Label>
+                  <Input
+                    id="grant-name"
+                    value={newGrant.name}
+                    onChange={(e) => setNewGrant({...newGrant, name: e.target.value})}
+                    placeholder="Enter grant name"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="sector">Sector *</Label>
+                  <Select 
+                    value={newGrant.sector} 
+                    onValueChange={(value) => setNewGrant({...newGrant, sector: value})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select sector" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {['Technology', 'Healthcare', 'Fintech', 'E-commerce', 'Education', 'Manufacturing', 'Agriculture', 'Clean Energy', 'Biotech', 'AI/Machine Learning', 'Other'].map((sector) => (
+                        <SelectItem key={sector} value={sector}>
+                          {sector}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {newGrant.sector === 'Other' && (
+                    <Input
+                      className="mt-2"
+                      value={newGrant.sector_other}
+                      onChange={(e) => setNewGrant({...newGrant, sector_other: e.target.value})}
+                      placeholder="Specify other sector"
+                    />
+                  )}
+                </div>
               </div>
               <div>
-                <Label htmlFor="grant-deadline">Deadline</Label>
-                <Input
-                  id="grant-deadline"
-                  type="date"
-                  value={newGrant.deadline}
-                  onChange={(e) => setNewGrant({...newGrant, deadline: e.target.value})}
+                <Label htmlFor="eligibility">Eligibility Criteria</Label>
+                <Textarea
+                  id="eligibility"
+                  value={newGrant.eligibility}
+                  onChange={(e) => setNewGrant({...newGrant, eligibility: e.target.value})}
+                  placeholder="Enter eligibility criteria"
                 />
               </div>
             </div>
-            <div>
-              <Label htmlFor="grant-sector">Sector</Label>
-              <Input
-                id="grant-sector"
-                value={newGrant.sector}
-                onChange={(e) => setNewGrant({...newGrant, sector: e.target.value})}
-                placeholder="e.g., Technology, Healthcare"
-              />
+
+            {/* Funding Details */}
+            <div className="space-y-4">
+              <h3 className="font-semibold text-lg border-b pb-2">Funding Details</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="funding-amount">Funding Amount</Label>
+                  <Input
+                    id="funding-amount"
+                    value={newGrant.funding_amount}
+                    onChange={(e) => setNewGrant({...newGrant, funding_amount: e.target.value})}
+                    placeholder="e.g., ₹10,00,000"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="funding-type">Funding Type</Label>
+                  <Input
+                    id="funding-type"
+                    value={newGrant.funding_type}
+                    onChange={(e) => setNewGrant({...newGrant, funding_type: e.target.value})}
+                    placeholder="e.g., Grant, Loan, Equity"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="funding-ratio">Funding Ratio</Label>
+                  <Input
+                    id="funding-ratio"
+                    value={newGrant.funding_ratio}
+                    onChange={(e) => setNewGrant({...newGrant, funding_ratio: e.target.value})}
+                    placeholder="e.g., 100%, 80%"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="co-investment">Co-investment Requirement</Label>
+                  <Input
+                    id="co-investment"
+                    value={newGrant.co_investment_requirement}
+                    onChange={(e) => setNewGrant({...newGrant, co_investment_requirement: e.target.value})}
+                    placeholder="e.g., Yes, No"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="matching-investment">Matching Investment</Label>
+                  <Input
+                    id="matching-investment"
+                    value={newGrant.matching_investment}
+                    onChange={(e) => setNewGrant({...newGrant, matching_investment: e.target.value})}
+                    placeholder="e.g., 20%, 30%"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="repayment-terms">Repayment Terms</Label>
+                  <Input
+                    id="repayment-terms"
+                    value={newGrant.repayment_terms}
+                    onChange={(e) => setNewGrant({...newGrant, repayment_terms: e.target.value})}
+                    placeholder="e.g., 5 years @ 8%"
+                  />
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="disbursement">Disbursement Schedule</Label>
+                <Input
+                  id="disbursement"
+                  value={newGrant.disbursement_schedule}
+                  onChange={(e) => setNewGrant({...newGrant, disbursement_schedule: e.target.value})}
+                  placeholder="e.g., Milestone-based, Quarterly"
+                />
+              </div>
             </div>
-            <div>
-              <Label htmlFor="grant-eligibility">Eligibility Criteria</Label>
-              <Input
-                id="grant-eligibility"
-                value={newGrant.eligibility}
-                onChange={(e) => setNewGrant({...newGrant, eligibility: e.target.value})}
-                placeholder="Enter eligibility criteria"
-              />
+
+            {/* Application Details */}
+            <div className="space-y-4">
+              <h3 className="font-semibold text-lg border-b pb-2">Application Details</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="application-link">Application Link</Label>
+                  <Input
+                    id="application-link"
+                    value={newGrant.application_link}
+                    onChange={(e) => setNewGrant({...newGrant, application_link: e.target.value})}
+                    placeholder="https://example.com/apply"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="deadline">Deadline</Label>
+                  <Input
+                    id="deadline"
+                    type="date"
+                    value={newGrant.deadline}
+                    onChange={(e) => setNewGrant({...newGrant, deadline: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="documents">Documents Required</Label>
+                  <Input
+                    id="documents"
+                    value={newGrant.documents_required}
+                    onChange={(e) => setNewGrant({...newGrant, documents_required: e.target.value})}
+                    placeholder="e.g., Business Plan, Pitch Deck"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="contact-info">Contact Info</Label>
+                  <Input
+                    id="contact-info"
+                    value={newGrant.contact_info}
+                    onChange={(e) => setNewGrant({...newGrant, contact_info: e.target.value})}
+                    placeholder="contact@example.com"
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <Label htmlFor="grant-link">Application Link</Label>
-              <Input
-                id="grant-link"
-                type="url"
-                value={newGrant.application_link}
-                onChange={(e) => setNewGrant({...newGrant, application_link: e.target.value})}
-                placeholder="https://..."
-              />
+
+            {/* Location & Focus */}
+            <div className="space-y-4">
+              <h3 className="font-semibold text-lg border-b pb-2">Location & Focus Areas</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="region">Region/Focus</Label>
+                  <Input
+                    id="region"
+                    value={newGrant.region_focus}
+                    onChange={(e) => setNewGrant({...newGrant, region_focus: e.target.value})}
+                    placeholder="e.g., National, Regional"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="place">Place</Label>
+                  <Input
+                    id="place"
+                    value={newGrant.place}
+                    onChange={(e) => setNewGrant({...newGrant, place: e.target.value})}
+                    placeholder="e.g., Mumbai, Delhi"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="stage">Stage of Startup</Label>
+                  <Select 
+                    value={newGrant.stage} 
+                    onValueChange={(value) => setNewGrant({...newGrant, stage: value})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select stage" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Ideation">Ideation</SelectItem>
+                      <SelectItem value="Start-up">Start-up</SelectItem>
+                      <SelectItem value="Growth/Scale-up">Growth/Scale-up</SelectItem>
+                      <SelectItem value="Established">Established</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="sector-focus">Sector Focus</Label>
+                  <Input
+                    id="sector-focus"
+                    value={newGrant.sector_focus}
+                    onChange={(e) => setNewGrant({...newGrant, sector_focus: e.target.value})}
+                    placeholder="e.g., Technology, Healthcare"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="gender-focus">Gender Focus</Label>
+                  <Input
+                    id="gender-focus"
+                    value={newGrant.gender_focus}
+                    onChange={(e) => setNewGrant({...newGrant, gender_focus: e.target.value})}
+                    placeholder="e.g., Woman-owned, General"
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <Label htmlFor="grant-stage">Stage of Startup</Label>
-              <Input
-                id="grant-stage"
-                value={newGrant.stage}
-                onChange={(e) => setNewGrant({...newGrant, stage: e.target.value})}
-                placeholder="e.g., Early-stage, Growth"
-              />
+
+            {/* Innovation & Impact */}
+            <div className="space-y-4">
+              <h3 className="font-semibold text-lg border-b pb-2">Innovation & Impact</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="innovation-type">Innovation Type</Label>
+                  <Input
+                    id="innovation-type"
+                    value={newGrant.innovation_type}
+                    onChange={(e) => setNewGrant({...newGrant, innovation_type: e.target.value})}
+                    placeholder="e.g., Product, Process, Social"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="trl">TRL (Technology Readiness Level)</Label>
+                  <Input
+                    id="trl"
+                    value={newGrant.trl}
+                    onChange={(e) => setNewGrant({...newGrant, trl: e.target.value})}
+                    placeholder="e.g., 5-7, 3-5"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="impact-criteria">Impact Criteria</Label>
+                  <Input
+                    id="impact-criteria"
+                    value={newGrant.impact_criteria}
+                    onChange={(e) => setNewGrant({...newGrant, impact_criteria: e.target.value})}
+                    placeholder="e.g., Social Impact, Economic Impact"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="success-metrics">Success Metrics</Label>
+                  <Input
+                    id="success-metrics"
+                    value={newGrant.success_metrics}
+                    onChange={(e) => setNewGrant({...newGrant, success_metrics: e.target.value})}
+                    placeholder="e.g., Revenue Growth, User Acquisition"
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <Label htmlFor="grant-soft-approval">Soft Approval</Label>
-              <select
-                id="grant-soft-approval"
-                value={newGrant.soft_approval}
-                onChange={(e) => setNewGrant({...newGrant, soft_approval: e.target.value})}
-                className="w-full border border-gray-300 rounded-md p-2"
-              >
-                <option value="No">No</option>
-                <option value="Yes">Yes</option>
-              </select>
+
+            {/* Program Details */}
+            <div className="space-y-4">
+              <h3 className="font-semibold text-lg border-b pb-2">Program Details</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="program-duration">Program Duration</Label>
+                  <Input
+                    id="program-duration"
+                    value={newGrant.program_duration}
+                    onChange={(e) => setNewGrant({...newGrant, program_duration: e.target.value})}
+                    placeholder="e.g., 12 months, 18 months"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="mentorship">Mentorship/Training</Label>
+                  <Input
+                    id="mentorship"
+                    value={newGrant.mentorship_training}
+                    onChange={(e) => setNewGrant({...newGrant, mentorship_training: e.target.value})}
+                    placeholder="e.g., Yes, No"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="soft-approval">Soft Approval</Label>
+                  <Select 
+                    value={newGrant.soft_approval} 
+                    onValueChange={(value) => setNewGrant({...newGrant, soft_approval: value})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Yes">Yes</SelectItem>
+                      <SelectItem value="No">No</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
-            <Button 
-              onClick={handleAddGrant} 
-              className="w-full bg-[#5d248f] hover:bg-[#4a1d70]"
-            >
+
+            <Button onClick={handleAddGrant} className="w-full">
               Add Grant
             </Button>
           </div>
@@ -803,7 +1247,10 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
                     {selectedStartup.tracking.map((track, idx) => (
                       <div key={idx} className="p-3 bg-gray-50 rounded-lg">
                         <div className="flex justify-between items-center">
-                          <p className="font-medium text-gray-900">Grant ID: {track.grant_id}</p>
+                          <div>
+                            <p className="font-medium text-gray-900">{track.grant_name || 'Unknown Grant'}</p>
+                            <p className="text-xs text-gray-500">Grant ID: {track.grant_id}</p>
+                          </div>
                           <Badge className={getStatusColor(track.status)}>{track.status}</Badge>
                         </div>
                         <p className="text-sm text-gray-600 mt-1">Progress: {track.progress}</p>
@@ -813,6 +1260,102 @@ const IncubationAdminDashboard = ({ user, handleLogout }) => {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Grant Details Dialog */}
+      <Dialog open={isViewDetailsOpen} onOpenChange={setIsViewDetailsOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Grant Details</DialogTitle>
+          </DialogHeader>
+          {selectedGrantDetails && (
+            <div className="space-y-6">
+              {/* Basic Information */}
+              <div className="space-y-3">
+                <h3 className="font-semibold text-lg border-b pb-2">Basic Information</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><span className="font-medium">Grant Name:</span> <span className="text-gray-700">{selectedGrantDetails.name || 'N/A'}</span></div>
+                  <div><span className="font-medium">Grant ID:</span> <span className="text-gray-700">{selectedGrantDetails.grant_id || 'N/A'}</span></div>
+                  <div><span className="font-medium">Sector:</span> <span className="text-gray-700">{selectedGrantDetails.sector || 'N/A'}</span></div>
+                  <div><span className="font-medium">Soft Approval:</span> <Badge className={selectedGrantDetails.soft_approval === 'Yes' ? 'bg-green-500' : 'bg-gray-500'}>{selectedGrantDetails.soft_approval || 'No'}</Badge></div>
+                </div>
+                {selectedGrantDetails.eligibility && (
+                  <div className="mt-2">
+                    <span className="font-medium">Eligibility Criteria:</span>
+                    <p className="text-gray-700 mt-1">{selectedGrantDetails.eligibility}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Funding Details */}
+              <div className="space-y-3">
+                <h3 className="font-semibold text-lg border-b pb-2">Funding Details</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><span className="font-medium">Funding Amount:</span> <span className="text-gray-700">{selectedGrantDetails.funding_amount || 'N/A'}</span></div>
+                  <div><span className="font-medium">Funding Type:</span> <span className="text-gray-700">{selectedGrantDetails.funding_type || 'N/A'}</span></div>
+                  <div><span className="font-medium">Funding Ratio:</span> <span className="text-gray-700">{selectedGrantDetails.funding_ratio || 'N/A'}</span></div>
+                  <div><span className="font-medium">Co-investment Required:</span> <span className="text-gray-700">{selectedGrantDetails.co_investment_requirement || 'N/A'}</span></div>
+                  <div><span className="font-medium">Matching Investment:</span> <span className="text-gray-700">{selectedGrantDetails.matching_investment || 'N/A'}</span></div>
+                  <div><span className="font-medium">Repayment Terms:</span> <span className="text-gray-700">{selectedGrantDetails.repayment_terms || 'N/A'}</span></div>
+                  <div className="col-span-2"><span className="font-medium">Disbursement Schedule:</span> <span className="text-gray-700">{selectedGrantDetails.disbursement_schedule || 'N/A'}</span></div>
+                </div>
+              </div>
+
+              {/* Application Details */}
+              <div className="space-y-3">
+                <h3 className="font-semibold text-lg border-b pb-2">Application Details</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><span className="font-medium">Deadline:</span> <span className="text-gray-700">{selectedGrantDetails.deadline || 'N/A'}</span></div>
+                  <div><span className="font-medium">Contact Info:</span> <span className="text-gray-700">{selectedGrantDetails.contact_info || 'N/A'}</span></div>
+                  <div className="col-span-2"><span className="font-medium">Documents Required:</span> <span className="text-gray-700">{selectedGrantDetails.documents_required || 'N/A'}</span></div>
+                  <div className="col-span-2">
+                    <span className="font-medium">Application Link:</span>{' '}
+                    {selectedGrantDetails.application_link ? (
+                      <a href={selectedGrantDetails.application_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                        {selectedGrantDetails.application_link}
+                      </a>
+                    ) : (
+                      <span className="text-gray-700">N/A</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Location & Focus */}
+              <div className="space-y-3">
+                <h3 className="font-semibold text-lg border-b pb-2">Location & Focus Areas</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><span className="font-medium">Region/Focus:</span> <span className="text-gray-700">{selectedGrantDetails.region_focus || 'N/A'}</span></div>
+                  <div><span className="font-medium">Place:</span> <span className="text-gray-700">{selectedGrantDetails.place || 'N/A'}</span></div>
+                  <div><span className="font-medium">Stage of Startup:</span> <span className="text-gray-700">{selectedGrantDetails.stage || 'N/A'}</span></div>
+                  <div><span className="font-medium">Sector Focus:</span> <span className="text-gray-700">{selectedGrantDetails.sector_focus || 'N/A'}</span></div>
+                  <div><span className="font-medium">Gender Focus:</span> <span className="text-gray-700">{selectedGrantDetails.gender_focus || 'N/A'}</span></div>
+                </div>
+              </div>
+
+              {/* Innovation & Impact */}
+              <div className="space-y-3">
+                <h3 className="font-semibold text-lg border-b pb-2">Innovation & Impact</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><span className="font-medium">Innovation Type:</span> <span className="text-gray-700">{selectedGrantDetails.innovation_type || 'N/A'}</span></div>
+                  <div><span className="font-medium">TRL:</span> <span className="text-gray-700">{selectedGrantDetails.trl || 'N/A'}</span></div>
+                  <div><span className="font-medium">Impact Criteria:</span> <span className="text-gray-700">{selectedGrantDetails.impact_criteria || 'N/A'}</span></div>
+                  <div><span className="font-medium">Success Metrics:</span> <span className="text-gray-700">{selectedGrantDetails.success_metrics || 'N/A'}</span></div>
+                </div>
+              </div>
+
+              {/* Program Details */}
+              <div className="space-y-3">
+                <h3 className="font-semibold text-lg border-b pb-2">Program Details</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><span className="font-medium">Program Duration:</span> <span className="text-gray-700">{selectedGrantDetails.program_duration || 'N/A'}</span></div>
+                  <div><span className="font-medium">Mentorship/Training:</span> <span className="text-gray-700">{selectedGrantDetails.mentorship_training || 'N/A'}</span></div>
+                  <div><span className="font-medium">Created At:</span> <span className="text-gray-700">{selectedGrantDetails.created_at || 'N/A'}</span></div>
+                </div>
+              </div>
             </div>
           )}
         </DialogContent>
